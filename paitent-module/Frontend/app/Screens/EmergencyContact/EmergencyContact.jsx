@@ -318,7 +318,7 @@ export default function EmergencyContact() {
 
             {/* ✅ Helper text */}
             <Text style={styles.helperText}>
-              💡 Email add karo taake guardian sirf usi email se register kar sake
+              Add email restriction so that the guardian can register only with that specific email.
             </Text>
 
             <View style={styles.modalButtonContainer}>

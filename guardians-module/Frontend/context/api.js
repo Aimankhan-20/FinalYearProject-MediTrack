@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_BASE_URL = 'http://192.168.1.6:5001'; // ✅ space hatao
+const API_BASE_URL = 'http://192.168.1.7:5001'; 
 
 export const getToken = async () => {
   return await AsyncStorage.getItem('guardianToken');

@@ -67,7 +67,7 @@ const emergencyContactRoutes = require("./routes/emergencyContactRoutes");
 app.use("/api/emergency-contacts", emergencyContactRoutes);
 console.log("✅ Emergency contact routes loaded");
 
-const vitalRoutes = require("./routes/vitalRoutes");  // ✅ yeh line
+const vitalRoutes = require("./routes/vitalRoutes");  
 app.use("/api/vitals", vitalRoutes);
 console.log("✅ Vitals routes loaded");
 

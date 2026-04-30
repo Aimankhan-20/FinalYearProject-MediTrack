@@ -11,7 +11,6 @@ const TachycardiaBradycardia = require('../models/TachycardiaBradycardia');
 const EmergencyContact       = require('../models/EmergencyContact');
 const User                   = require('../models/User');
 
-// ✅ Guardian model import — same MongoDB database hai dono ka
 const mongoose = require('mongoose');
 const Guardian = mongoose.models.Guardian || require('mongoose').model('Guardian', new mongoose.Schema({
   name:          String,
@@ -27,27 +26,43 @@ const { processHypertension } = require('../services/hypertensionService');
 const { processSleepApnea }   = require('../services/sleepApneaService');
 const { processTachyBrady }   = require('../services/tachyBradyService');
 
-// ✅ FastAPI ML Server URL
 const ML_SERVER_URL = process.env.ML_SERVER_URL || 'http://localhost:8000';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 🔔 Guardian Notification Helper — Expo Push Notification
+// 🌡️ Temperature Sanitizer Helper
+// Health Connect se kabhi kabhi room temp (18-25°C) aa jati hai
+// Ya Fahrenheit value aa jati hai (98.6°F)
+// Ye function ensure karta hai ke sirf valid body temp (35-42°C) save ho
+// ─────────────────────────────────────────────────────────────────────────────
+const sanitizeTemperature = (rawTemp) => {
+  if (!rawTemp || isNaN(rawTemp)) return 37.0;
+
+  const temp = parseFloat(rawTemp);
+
+  // Agar Fahrenheit mein hai (e.g. 98.6) — Celsius convert karo
+  if (temp > 42 && temp < 110) {
+    const celsius = parseFloat(((temp - 32) * 5 / 9).toFixed(1));
+    // Converted value valid hai?
+    if (celsius >= 35 && celsius <= 42) return celsius;
+  }
+
+  // Already Celsius mein hai aur valid range mein hai
+  if (temp >= 35 && temp <= 42) return temp;
+
+  // Koi bhi valid value nahi mili — default use karo
+  console.warn(`⚠️ Invalid temperature received: ${rawTemp} — using default 37.0`);
+  return 37.0;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 🔔 Guardian Notification Helper
 // ─────────────────────────────────────────────────────────────────────────────
 const sendGuardianNotification = async (userId, title, body) => {
   try {
-    // Guardian collection se patientId match karke dhundo
-    const guardians = await Guardian.find({
-      patientId:  userId,
-      isVerified: true,
-    });
-
-    if (!guardians.length) {
-      console.log(`⚠️ No guardians linked for patient: ${userId}`);
-      return;
-    }
+    const guardians = await Guardian.find({ patientId: userId, isVerified: true });
+    if (!guardians.length) return;
 
     const messages = [];
-
     for (const guardian of guardians) {
       if (guardian.expoPushToken) {
         messages.push({
@@ -55,36 +70,17 @@ const sendGuardianNotification = async (userId, title, body) => {
           sound: 'default',
           title,
           body,
-          data: {
-            userId: userId.toString(),
-            type:   'vital_alert',
-          },
+          data: { userId: userId.toString(), type: 'vital_alert' },
         });
-        console.log(`🔔 Guardian: ${guardian.name} (${guardian.relation})`);
-      } else {
-        console.log(`⚠️ No push token: ${guardian.name}`);
       }
     }
 
-    if (!messages.length) {
-      console.log('⚠️ No push tokens found — notification skipped');
-      return;
-    }
+    if (!messages.length) return;
 
-    await axios.post(
-      'https://exp.host/--/api/v2/push/send',
-      messages,
-      {
-        headers: {
-          'Accept':       'application/json',
-          'Content-Type': 'application/json',
-        },
-        timeout: 5000,
-      }
-    );
-
-    console.log(`✅ Notifications sent to ${messages.length} guardian(s)`);
-
+    await axios.post('https://exp.host/--/api/v2/push/send', messages, {
+      headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      timeout: 5000,
+    });
   } catch (err) {
     console.error('❌ Guardian notification error:', err.message);
   }
@@ -125,22 +121,14 @@ const checkAndNotifyVitals = async (userId, reading) => {
   for (const alert of alerts) {
     await sendGuardianNotification(userId, alert.title, alert.body);
   }
-
-  if (alerts.length > 0) {
-    console.log(`🔔 ${alerts.length} alert(s) sent for user: ${userId}`);
-  }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ✅ ML Prediction Helper — FastAPI call karo
+// ✅ ML Prediction Helper
 // ─────────────────────────────────────────────────────────────────────────────
 const getMLPrediction = async (endpoint, payload) => {
   try {
-    const response = await axios.post(
-      `${ML_SERVER_URL}${endpoint}`,
-      payload,
-      { timeout: 8000 }
-    );
+    const response = await axios.post(`${ML_SERVER_URL}${endpoint}`, payload, { timeout: 8000 });
     return response.data;
   } catch (err) {
     console.warn(`⚠️ ML prediction skipped (${endpoint}):`, err.message);
@@ -161,7 +149,6 @@ router.post('/record', auth, async (req, res) => {
 
     const hr   = heartRate;
     const spo2 = bloodOxygen;
-    const temp = temperature ?? 37.0;
 
     if (!hr || !spo2) {
       return res.status(400).json({
@@ -170,16 +157,44 @@ router.post('/record', auth, async (req, res) => {
       });
     }
 
-   // ✅ Naya — 98.6 > 42 = true, sahi conversion hogi
-const tempCelsius = temp > 42
-  ? parseFloat(((temp - 32) * 5 / 9).toFixed(1))
-  : temp;
+    // ✅ FIX: Temperature 3 jagah se try karo — priority order mein:
+    // 1. Request body se (agar valid ho)
+    // 2. User profile se (agar wahan ho)
+    // 3. Default 37.0
+
+    let finalTemperature = 37.0;
+
+    // Step 1: Body se aayi temperature check karo
+    if (temperature) {
+      const sanitized = sanitizeTemperature(temperature);
+      if (sanitized !== 37.0 || (temperature >= 35 && temperature <= 42)) {
+        finalTemperature = sanitized;
+      }
+    }
+
+    // Step 2: Agar body se valid nahi mili — profile se lo
+    if (finalTemperature === 37.0) {
+      try {
+        const user = await User.findById(req.user.id).select('vitals');
+        if (user?.vitals?.temperature) {
+          const profileTemp = sanitizeTemperature(user.vitals.temperature);
+          if (profileTemp >= 35 && profileTemp <= 42) {
+            finalTemperature = profileTemp;
+          }
+        }
+      } catch (e) {
+        console.warn('⚠️ Profile temperature fetch failed, using default 37.0');
+      }
+    }
+
+    console.log(`🌡️ Temperature used: ${finalTemperature}°C (raw input: ${temperature})`);
+
     const reading = new VitalReading({
-      userId:          req.user.id,
-      timestamp:       new Date(),
+      userId:           req.user.id,
+      timestamp:        new Date(),
       heartRate:        hr,
       bloodOxygen:      spo2,
-      temperature:      tempCelsius,
+      temperature:      finalTemperature,   // ✅ sanitized & validated
       age:              age             ?? null,
       gender:           gender          ?? null,
       systolicBP:       systolicBP      ?? null,
@@ -189,27 +204,29 @@ const tempCelsius = temp > 42
       footsteps:        footsteps       ?? 0,
       restingHeartRate: restingHeartRate ?? null,
       bmi:              bmi             ?? null,
-      accelerometer:    accelerometer   ?? { x: 0, y: 9.8, z: 0, intensity: 'Still' },
+      accelerometer:    accelerometer   ?? { x: 0, y: 0, z: 0, intensity: 'Still' },
     });
 
     await reading.save();
-    console.log(`✅ VitalReading saved | Condition: ${reading.condition} | Severity: ${reading.severity}`);
-
     await checkAndNotifyVitals(req.user.id, reading);
 
     res.status(201).json({
       success: true,
       message: 'Vitals saved successfully',
       data: {
-        id:          reading._id,
-        heartRate:   reading.heartRate,
-        bloodOxygen: reading.bloodOxygen,
-        temperature: reading.temperature,
-        condition:   reading.condition,
-        riskScore:   reading.riskScore,
-        severity:    reading.severity,
-        alertLevel:  reading.alertLevel,
-        timestamp:   reading.timestamp,
+        id:               reading._id,
+        heartRate:        reading.heartRate,
+        bloodOxygen:      reading.bloodOxygen,
+        temperature:      reading.temperature,
+        footsteps:        reading.footsteps,
+        restingHeartRate: reading.restingHeartRate,
+        bmi:              reading.bmi,
+        accelerometer:    reading.accelerometer,
+        condition:        reading.condition,
+        riskScore:        reading.riskScore,
+        severity:         reading.severity,
+        alertLevel:       reading.alertLevel,
+        timestamp:        reading.timestamp,
       },
     });
 
@@ -220,220 +237,23 @@ const tempCelsius = temp > 42
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// POST /api/vitals/hypertension
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/hypertension', auth, async (req, res) => {
-  try {
-    const derived = processHypertension(req.body);
-    const stepsArray = req.body.steps_7days || [0,0,0,0,0,0,0];
-    const mlPayload = {
-      Age:                      req.body.age,
-      Gender:                   req.body.gender,
-      Height_cm:                req.body.height_cm,
-      Weight_kg:                req.body.weight_kg,
-      BMI:                      derived.bmi,
-      Resting_HR:               req.body.resting_hr,
-      Steps_Day1:               stepsArray[0] || 0,
-      Steps_Day2:               stepsArray[1] || 0,
-      Steps_Day3:               stepsArray[2] || 0,
-      Steps_Day4:               stepsArray[3] || 0,
-      Steps_Day5:               stepsArray[4] || 0,
-      Steps_Day6:               stepsArray[5] || 0,
-      Steps_Day7:               stepsArray[6] || 0,
-      Steps_7day_avg:           derived.steps_7day_avg,
-      Steps_Score:              derived.steps_score,
-      Systolic_BP:              req.body.systolic_bp,
-      Diastolic_BP:             req.body.diastolic_bp,
-      Pulse_Pressure:           derived.pulse_pressure,
-      MAP:                      derived.map_mmhg,
-      HRR_Proxy:                derived.hrr_proxy,
-      Hypertension_Risk_Score:  derived.risk_score,
-      model:                    'rf',
-    };
-
-    const mlResult = await getMLPrediction('/predict/hypertension', mlPayload);
-    console.log(`🤖 Hypertension ML: ${mlResult?.severity} (${mlResult?.confidence_percent}%)`);
-
-    const record = new Hypertension({
-      patient_id:   req.user.id,
-      age:          req.body.age,
-      gender:       req.body.gender,
-      weight_kg:    req.body.weight_kg,
-      height_cm:    req.body.height_cm,
-      systolic_bp:  req.body.systolic_bp,
-      diastolic_bp: req.body.diastolic_bp,
-      resting_hr:   req.body.resting_hr,
-      steps_7days:  stepsArray,
-      ...derived,
-      ml_prediction:    mlResult?.severity           || null,
-      ml_confidence:    mlResult?.confidence_percent || null,
-      ml_probabilities: mlResult?.probabilities      || null,
-    });
-    await record.save();
-
-    const finalSeverity = mlResult?.severity || derived.severity;
-    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
-      await sendGuardianNotification(
-        req.user.id,
-        '🚨 Hypertension Alert',
-        `ML Model ne ${finalSeverity} Hypertension detect ki — BP ${req.body.systolic_bp}/${req.body.diastolic_bp} mmHg. Confidence: ${mlResult?.confidence_percent || 'N/A'}%`
-      );
-    }
-
-    res.status(201).json({ success: true, message: '✅ Hypertension data saved', data: record, ml_result: mlResult });
-
-  } catch (error) {
-    console.error('❌ Hypertension error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/vitals/sleep-apnea
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/sleep-apnea', auth, async (req, res) => {
-  try {
-    const derived = processSleepApnea(req.body);
-    const hr = req.body.heart_rate;
-    const mlPayload = {
-      Age:              req.body.age,
-      Gender:           req.body.gender,
-      Sleep_Hours:      req.body.sleep_duration_hours || 7,
-      SpO2:             req.body.spo2,
-      HR:               hr,
-      Accel:            req.body.accel || 0.02,
-      SpO2_Baseline:    req.body.spo2 + (req.body.spo2_drop || 0),
-      SpO2_Drop:        req.body.spo2_drop || 0,
-      HR_Variability:   5.0,
-      HR_Pattern:       hr > 100 ? 'spike' : hr > 85 ? 'fluctuating' : 'steady',
-      Accel_Type:       (req.body.accel || 0) > 0.1 ? 'jerk' : (req.body.accel || 0) > 0.03 ? 'restless' : 'still',
-      SpO2_Score:       derived.spo2_score,
-      HR_Score:         derived.hr_score,
-      Accel_Score:      derived.accel_score,
-      Age_Gender_Score: derived.age_gender_score,
-      Risk_Multiplier:  derived.risk_multiplier,
-      Physio_Score:     derived.physio_score,
-      Event_Score:      derived.event_score,
-      Events_L1:        derived.event_label === 1 ? 1 : 0,
-      Events_L2:        derived.event_label === 2 ? 1 : 0,
-      Total_Events:     derived.event_label,
-      AHI_Score:        req.body.ahi || derived.event_score / 3,
-      AHI_Threshold:    derived.ahi_threshold,
-      model:            'rf',
-    };
-
-    const mlResult = await getMLPrediction('/predict/sleep-apnea', mlPayload);
-    console.log(`🤖 Sleep Apnea ML: ${mlResult?.severity} (${mlResult?.confidence_percent}%)`);
-
-    const record = new SleepApnea({
-      patient_id:           req.user.id,
-      age:                  req.body.age,
-      gender:               req.body.gender,
-      spo2:                 req.body.spo2,
-      spo2_drop:            req.body.spo2_drop,
-      heart_rate:           req.body.heart_rate,
-      hr_spike:             req.body.hr_spike,
-      accel:                req.body.accel,
-      sleep_duration_hours: req.body.sleep_duration_hours,
-      time_in_bed_hours:    req.body.time_in_bed_hours,
-      ahi:                  req.body.ahi,
-      ...derived,
-      ml_prediction:    mlResult?.severity           || null,
-      ml_confidence:    mlResult?.confidence_percent || null,
-      ml_probabilities: mlResult?.probabilities      || null,
-    });
-    await record.save();
-
-    const finalSeverity = mlResult?.severity || derived.severity;
-    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
-      await sendGuardianNotification(
-        req.user.id,
-        '🚨 Sleep Apnea Alert',
-        `ML Model ne ${finalSeverity} Sleep Apnea detect ki — SpO2 ${req.body.spo2}%, HR ${req.body.heart_rate} bpm. Confidence: ${mlResult?.confidence_percent || 'N/A'}%`
-      );
-    }
-
-    res.status(201).json({ success: true, message: '✅ Sleep Apnea data saved', data: record, ml_result: mlResult });
-
-  } catch (error) {
-    console.error('❌ Sleep Apnea error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/vitals/tachy-brady
-// ─────────────────────────────────────────────────────────────────────────────
-router.post('/tachy-brady', auth, async (req, res) => {
-  try {
-    const derived = processTachyBrady(req.body);
-    const mlPayload = {
-      Age:               req.body.age,
-      Gender:            req.body.gender,
-      HR:                req.body.heart_rate,
-      SpO2:              req.body.spo2,
-      Body_Temp:         37.0,
-      Systolic_BP:       req.body.systolic_bp,
-      Diastolic_BP:      req.body.diastolic_bp,
-      Blood_Sugar:       100,
-      Respiratory_Rate:  16,
-      Pulse_Pressure:    derived.pulse_pressure,
-      MAP:               derived.map_mmhg,
-      Max_HR:            derived.max_hr,
-      HRR:               derived.hrr,
-      Shock_Index:       derived.shock_index,
-      RPP:               derived.rpp,
-      SpO2_Deficit:      derived.spo2_deficit,
-      Condition:         derived.hr_condition,
-      Risk_Score:        derived.risk_score,
-      model:             'rf',
-    };
-
-    const mlResult = await getMLPrediction('/predict/heart', mlPayload);
-    console.log(`🤖 TachyBrady ML: ${mlResult?.severity} (${mlResult?.confidence_percent}%)`);
-
-    const record = new TachycardiaBradycardia({
-      patient_id:   req.user.id,
-      age:          req.body.age,
-      gender:       req.body.gender,
-      heart_rate:   req.body.heart_rate,
-      systolic_bp:  req.body.systolic_bp,
-      diastolic_bp: req.body.diastolic_bp,
-      spo2:         req.body.spo2,
-      ...derived,
-      ml_prediction:    mlResult?.severity           || null,
-      ml_confidence:    mlResult?.confidence_percent || null,
-      ml_probabilities: mlResult?.probabilities      || null,
-    });
-    await record.save();
-
-    const finalSeverity = mlResult?.severity || derived.severity;
-    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
-      await sendGuardianNotification(
-        req.user.id,
-        '🚨 Tachycardia/Bradycardia Alert',
-        `ML Model ne ${finalSeverity} ${derived.hr_condition} detect ki — HR ${req.body.heart_rate} bpm. Confidence: ${mlResult?.confidence_percent || 'N/A'}%`
-      );
-    }
-
-    res.status(201).json({ success: true, message: '✅ TachyBrady data saved', data: record, ml_result: mlResult });
-
-  } catch (error) {
-    console.error('❌ Tachy/Brady error:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
 // GET /api/vitals/latest
 // ─────────────────────────────────────────────────────────────────────────────
 router.get('/latest', auth, async (req, res) => {
   try {
     const latest = await VitalReading.findOne({ userId: req.user.id }).sort({ timestamp: -1 });
-    if (!latest) return res.status(404).json({ success: false, message: 'No vitals found' });
+
+    if (!latest) {
+      return res.json({
+        success: true,
+        data: null,
+        message: 'No vitals recorded yet',
+      });
+    }
+
     res.json({ success: true, data: latest });
   } catch (error) {
-    res.status(500).json({ message: 'Failed to fetch latest vitals' });
+    res.status(500).json({ success: false, message: 'Failed to fetch latest vitals' });
   }
 });
 
@@ -523,18 +343,18 @@ router.post('/manual', auth, async (req, res) => {
   try {
     const { systolicBP, diastolicBP, bloodSugar, temperature } = req.body;
 
+    // ✅ FIX: Manual entry mein bhi temperature sanitize karo
+    const safeTemp = temperature ? sanitizeTemperature(temperature) : null;
+
     const latest = await VitalReading.findOne({ userId: req.user.id }).sort({ timestamp: -1 });
 
     if (latest) {
       if (systolicBP)  latest.systolicBP  = systolicBP;
       if (diastolicBP) latest.diastolicBP = diastolicBP;
       if (bloodSugar)  latest.bloodSugar  = bloodSugar;
-      if (temperature) latest.temperature = temperature;
+      if (safeTemp)    latest.temperature = safeTemp;
       await latest.save();
-
-      // ✅ Notification check karo
       await checkAndNotifyVitals(req.user.id, latest);
-
       return res.json({ success: true, message: 'Vitals updated', data: latest });
     }
 
@@ -543,20 +363,214 @@ router.post('/manual', auth, async (req, res) => {
       systolicBP:  systolicBP  || null,
       diastolicBP: diastolicBP || null,
       bloodSugar:  bloodSugar  || null,
-      temperature: temperature || 37,
+      temperature: safeTemp    || 37.0,
       heartRate:   70,
       bloodOxygen: 98,
       timestamp:   new Date(),
     });
     await reading.save();
-
-    // ✅ Notification check karo
     await checkAndNotifyVitals(req.user.id, reading);
 
     res.json({ success: true, message: 'Vitals saved', data: reading });
 
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/hypertension
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/hypertension', auth, async (req, res) => {
+  try {
+    const derived = processHypertension(req.body);
+    const stepsArray = req.body.steps_7days || [0,0,0,0,0,0,0];
+    const mlPayload = {
+      Age:                      req.body.age,
+      Gender:                   req.body.gender,
+      Height_cm:                req.body.height_cm,
+      Weight_kg:                req.body.weight_kg,
+      BMI:                      derived.bmi,
+      Resting_HR:               req.body.resting_hr,
+      Steps_Day1:               stepsArray[0] || 0,
+      Steps_Day2:               stepsArray[1] || 0,
+      Steps_Day3:               stepsArray[2] || 0,
+      Steps_Day4:               stepsArray[3] || 0,
+      Steps_Day5:               stepsArray[4] || 0,
+      Steps_Day6:               stepsArray[5] || 0,
+      Steps_Day7:               stepsArray[6] || 0,
+      Steps_7day_avg:           derived.steps_7day_avg,
+      Steps_Score:              derived.steps_score,
+      Systolic_BP:              req.body.systolic_bp,
+      Diastolic_BP:             req.body.diastolic_bp,
+      Pulse_Pressure:           derived.pulse_pressure,
+      MAP:                      derived.map_mmhg,
+      HRR_Proxy:                derived.hrr_proxy,
+      Hypertension_Risk_Score:  derived.risk_score,
+      model:                    'rf',
+    };
+
+    const mlResult = await getMLPrediction('/predict/hypertension', mlPayload);
+
+    const record = new Hypertension({
+      patient_id:   req.user.id,
+      age:          req.body.age,
+      gender:       req.body.gender,
+      weight_kg:    req.body.weight_kg,
+      height_cm:    req.body.height_cm,
+      systolic_bp:  req.body.systolic_bp,
+      diastolic_bp: req.body.diastolic_bp,
+      resting_hr:   req.body.resting_hr,
+      steps_7days:  stepsArray,
+      ...derived,
+      ml_prediction:    mlResult?.severity           || null,
+      ml_confidence:    mlResult?.confidence_percent || null,
+      ml_probabilities: mlResult?.probabilities      || null,
+    });
+    await record.save();
+
+    const finalSeverity = mlResult?.severity || derived.severity;
+    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Hypertension Alert',
+        `ML Model ne ${finalSeverity} Hypertension detect ki — BP ${req.body.systolic_bp}/${req.body.diastolic_bp} mmHg`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ Hypertension data saved', data: record, ml_result: mlResult });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/sleep-apnea
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/sleep-apnea', auth, async (req, res) => {
+  try {
+    const derived = processSleepApnea(req.body);
+    const hr = req.body.heart_rate;
+    const mlPayload = {
+      Age:              req.body.age,
+      Gender:           req.body.gender,
+      Sleep_Hours:      req.body.sleep_duration_hours || 7,
+      SpO2:             req.body.spo2,
+      HR:               hr,
+      Accel:            req.body.accel || 0.02,
+      SpO2_Baseline:    req.body.spo2 + (req.body.spo2_drop || 0),
+      SpO2_Drop:        req.body.spo2_drop || 0,
+      HR_Variability:   5.0,
+      HR_Pattern:       hr > 100 ? 'spike' : hr > 85 ? 'fluctuating' : 'steady',
+      Accel_Type:       (req.body.accel || 0) > 0.1 ? 'jerk' : (req.body.accel || 0) > 0.03 ? 'restless' : 'still',
+      SpO2_Score:       derived.spo2_score,
+      HR_Score:         derived.hr_score,
+      Accel_Score:      derived.accel_score,
+      Age_Gender_Score: derived.age_gender_score,
+      Risk_Multiplier:  derived.risk_multiplier,
+      Physio_Score:     derived.physio_score,
+      Event_Score:      derived.event_score,
+      Events_L1:        derived.event_label === 1 ? 1 : 0,
+      Events_L2:        derived.event_label === 2 ? 1 : 0,
+      Total_Events:     derived.event_label,
+      AHI_Score:        req.body.ahi || derived.event_score / 3,
+      AHI_Threshold:    derived.ahi_threshold,
+      model:            'rf',
+    };
+
+    const mlResult = await getMLPrediction('/predict/sleep-apnea', mlPayload);
+
+    const record = new SleepApnea({
+      patient_id:           req.user.id,
+      age:                  req.body.age,
+      gender:               req.body.gender,
+      spo2:                 req.body.spo2,
+      spo2_drop:            req.body.spo2_drop,
+      heart_rate:           req.body.heart_rate,
+      hr_spike:             req.body.hr_spike,
+      accel:                req.body.accel,
+      sleep_duration_hours: req.body.sleep_duration_hours,
+      time_in_bed_hours:    req.body.time_in_bed_hours,
+      ahi:                  req.body.ahi,
+      ...derived,
+      ml_prediction:    mlResult?.severity           || null,
+      ml_confidence:    mlResult?.confidence_percent || null,
+      ml_probabilities: mlResult?.probabilities      || null,
+    });
+    await record.save();
+
+    const finalSeverity = mlResult?.severity || derived.severity;
+    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Sleep Apnea Alert',
+        `ML Model ne ${finalSeverity} Sleep Apnea detect ki — SpO2 ${req.body.spo2}%, HR ${req.body.heart_rate} bpm`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ Sleep Apnea data saved', data: record, ml_result: mlResult });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST /api/vitals/tachy-brady
+// ─────────────────────────────────────────────────────────────────────────────
+router.post('/tachy-brady', auth, async (req, res) => {
+  try {
+    const derived = processTachyBrady(req.body);
+    const mlPayload = {
+      Age:               req.body.age,
+      Gender:            req.body.gender,
+      HR:                req.body.heart_rate,
+      SpO2:              req.body.spo2,
+      Body_Temp:         37.0,
+      Systolic_BP:       req.body.systolic_bp,
+      Diastolic_BP:      req.body.diastolic_bp,
+      Blood_Sugar:       100,
+      Respiratory_Rate:  16,
+      Pulse_Pressure:    derived.pulse_pressure,
+      MAP:               derived.map_mmhg,
+      Max_HR:            derived.max_hr,
+      HRR:               derived.hrr,
+      Shock_Index:       derived.shock_index,
+      RPP:               derived.rpp,
+      SpO2_Deficit:      derived.spo2_deficit,
+      Condition:         derived.hr_condition,
+      Risk_Score:        derived.risk_score,
+      model:             'rf',
+    };
+
+    const mlResult = await getMLPrediction('/predict/heart', mlPayload);
+
+    const record = new TachycardiaBradycardia({
+      patient_id:   req.user.id,
+      age:          req.body.age,
+      gender:       req.body.gender,
+      heart_rate:   req.body.heart_rate,
+      systolic_bp:  req.body.systolic_bp,
+      diastolic_bp: req.body.diastolic_bp,
+      spo2:         req.body.spo2,
+      ...derived,
+      ml_prediction:    mlResult?.severity           || null,
+      ml_confidence:    mlResult?.confidence_percent || null,
+      ml_probabilities: mlResult?.probabilities      || null,
+    });
+    await record.save();
+
+    const finalSeverity = mlResult?.severity || derived.severity;
+    if (['Moderate', 'Severe', 'Critical'].includes(finalSeverity)) {
+      await sendGuardianNotification(
+        req.user.id,
+        '🚨 Tachycardia/Bradycardia Alert',
+        `ML Model ne ${finalSeverity} ${derived.hr_condition} detect ki — HR ${req.body.heart_rate} bpm`
+      );
+    }
+
+    res.status(201).json({ success: true, message: '✅ TachyBrady data saved', data: record, ml_result: mlResult });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

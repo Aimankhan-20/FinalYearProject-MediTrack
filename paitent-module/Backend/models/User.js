@@ -57,18 +57,19 @@ const userSchema = new mongoose.Schema({
   address: { type: String, default: "" },
 
   // Medical Information
-  bloodType: { type: String, default: "B+" },
-  height: { type: String, default: "5.6" },
-  weight: { type: String, default: "70" },
-  bmi: { type: Number, default: 23.4 },
-  allergies: { type: String, default: "None" },
-  medicalHistory: { type: String, default: "None" },
+ 
+bloodType: { type: String, default: "" },
+height: { type: String, default: "" },      // 
+weight: { type: String, default: "" },      // 
+bmi: { type: Number, default: null },       // 
+allergies: { type: String, default: "" },
+medicalHistory: { type: String, default: "" },
 
   // Health Summary
   dayMonitored: { type: Number, default: 0 },
-  normalReadings: { type: String, default: "100%" },
-  alerts: { type: Number, default: 0 },
-  healthScore: { type: String, default: "A+" },
+normalReadings: { type: String, default: "0%" },   
+alerts: { type: Number, default: 0 },
+healthScore: { type: String, default: "N/A" },
 
   // ✅ Expo Push Token for notifications
   expoPushToken: {

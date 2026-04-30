@@ -1,4 +1,8 @@
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Alert, Animated, Dimensions, ActivityIndicator } from 'react-native';
+import {
+  View, Text, TextInput, StyleSheet, TouchableOpacity,
+  Alert, Animated, Dimensions, ActivityIndicator,
+  KeyboardAvoidingView, ScrollView, Platform
+} from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,6 +30,9 @@ export default function SignIn() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
+  // ScrollView ref for auto-scroll
+  const scrollViewRef = useRef(null);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const logoScale = useRef(new Animated.Value(0)).current;
   const logoRotate = useRef(new Animated.Value(0)).current;
@@ -35,16 +42,11 @@ export default function SignIn() {
   const input1Slide = useRef(new Animated.Value(100)).current;
   const input2Slide = useRef(new Animated.Value(100)).current;
   const buttonSlide = useRef(new Animated.Value(100)).current;
-  const dividerScale = useRef(new Animated.Value(0)).current;
-  const socialSlide = useRef(new Animated.Value(100)).current;
-  const signUpSlide = useRef(new Animated.Value(50)).current;
   const float1 = useRef(new Animated.Value(0)).current;
   const float2 = useRef(new Animated.Value(0)).current;
   const float3 = useRef(new Animated.Value(0)).current;
   const colorPulse = useRef(new Animated.Value(0)).current;
   const buttonScale = useRef(new Animated.Value(1)).current;
-  const googleScale = useRef(new Animated.Value(1)).current;
-  const facebookScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     Animated.sequence([
@@ -108,24 +110,6 @@ export default function SignIn() {
           friction: 7,
           useNativeDriver: true,
         }),
-        Animated.spring(dividerScale, {
-          toValue: 1,
-          tension: 50,
-          friction: 7,
-          useNativeDriver: true,
-        }),
-        Animated.spring(socialSlide, {
-          toValue: 0,
-          tension: 50,
-          friction: 7,
-          useNativeDriver: true,
-        }),
-        Animated.spring(signUpSlide, {
-          toValue: 0,
-          tension: 50,
-          friction: 7,
-          useNativeDriver: true,
-        }),
       ]).start();
     }, 600);
 
@@ -158,7 +142,13 @@ export default function SignIn() {
     ).start();
   }, []);
 
-  // ✅ FIXED: Firebase error nahi aayega ab
+  // ✅ Jab koi field focus ho, scroll karke us field ko visible karo
+  const handleFieldFocus = (yOffset) => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: yOffset, animated: true });
+    }, 300);
+  };
+
   const registerForPushNotifications = async () => {
     try {
       if (!Device.isDevice) {
@@ -184,7 +174,6 @@ export default function SignIn() {
       return tokenData.data;
 
     } catch (error) {
-      // ✅ FIXED: Error aaye toh app crash nahi hoga
       console.log('⚠️ Push token skipped:', error.message);
       return null;
     }
@@ -252,12 +241,25 @@ export default function SignIn() {
 
       const data = await response.json();
 
-      if (response.ok) {
-        await AsyncStorage.setItem('userToken', data.token);
-        await AsyncStorage.setItem('userEmail', email.toLowerCase().trim());
+     if (response.ok) {
+  // ✅ Pehle wala sab data saaf karo
+  await AsyncStorage.multiRemove([
+    'userToken',
+    'userEmail',
+    'username',
+    'email',
+    'watchPaired',
+    'watchName',
+    'isNewSignup',
+  ]);
 
-        // ✅ Push token register karo aur backend mein save karo
+  // ✅ Naye user ka data save karo
+  await AsyncStorage.setItem('userToken', data.token);
+  await AsyncStorage.setItem('userEmail', email.toLowerCase().trim());
+  await AsyncStorage.setItem('username', data.user?.name || email.split('@')[0]);
+
         const expoPushToken = await registerForPushNotifications();
+        
         if (expoPushToken) {
           await savePushTokenToBackend(data.token, expoPushToken);
         }
@@ -293,23 +295,6 @@ export default function SignIn() {
     }
   };
 
-  const animateSocialButton = (scale) => {
-    Animated.sequence([
-      Animated.spring(scale, {
-        toValue: 0.95,
-        tension: 200,
-        friction: 3,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scale, {
-        toValue: 1,
-        tension: 200,
-        friction: 3,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  };
-
   const float1Y = float1.interpolate({
     inputRange: [0, 1],
     outputRange: [0, -20],
@@ -336,185 +321,165 @@ export default function SignIn() {
   });
 
   return (
-    <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
-      <View style={styles.backgroundOverlay} />
+    // ✅ KeyboardAvoidingView — keyboard aane par card upar uthta hai
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+    >
+      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+        <View style={styles.backgroundOverlay} />
 
-      <Animated.View style={[styles.particle1, { transform: [{ translateY: float1Y }] }]} />
-      <Animated.View style={[styles.particle2, { transform: [{ translateY: float2Y }] }]} />
-      <Animated.View style={[styles.particle3, { transform: [{ translateY: float3Y }] }]} />
+        <Animated.View style={[styles.particle1, { transform: [{ translateY: float1Y }] }]} />
+        <Animated.View style={[styles.particle2, { transform: [{ translateY: float2Y }] }]} />
+        <Animated.View style={[styles.particle3, { transform: [{ translateY: float3Y }] }]} />
 
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => router.back()}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={28} color="#fff" />
-        </TouchableOpacity>
-
-        <Animated.View
-          style={[
-            styles.logoContainer,
-            {
-              transform: [{ scale: logoScale }, { rotate: logoRotation }],
-              opacity: logoOpacity,
-            }
-          ]}
-        >
-          <Ionicons name="shield-checkmark" size={50} color="#fff" />
-        </Animated.View>
-      </View>
-
-      <Animated.View style={[styles.card, { transform: [{ translateY: cardSlide }] }]}>
-        <Animated.View style={{ transform: [{ translateY: titleSlide }], opacity: titleOpacity }}>
-          <Text style={styles.title}>Welcome Back!</Text>
-          <Text style={styles.subtitle}>Sign in to continue your journey</Text>
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.inputContainer,
-            {
-              transform: [{ translateX: input1Slide }],
-              opacity: input1Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
-            }
-          ]}
-        >
-          <View style={styles.iconWrapper}>
-            <Ionicons name="mail-outline" size={20} color="#667eea" />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Email"
-            placeholderTextColor="#999"
-            value={email}
-            onChangeText={setEmail}
-            autoCapitalize="none"
-            keyboardType="email-address"
-            editable={!loading}
-          />
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.inputContainer,
-            {
-              transform: [{ translateX: input2Slide }],
-              opacity: input2Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
-            }
-          ]}
-        >
-          <View style={styles.iconWrapper}>
-            <Ionicons name="lock-closed-outline" size={20} color="#667eea" />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Password"
-            placeholderTextColor="#999"
-            value={password}
-            onChangeText={setPassword}
-            secureTextEntry={!showPassword}
-            editable={!loading}
-          />
+        <View style={styles.header}>
           <TouchableOpacity
-            onPress={() => setShowPassword(!showPassword)}
-            style={styles.eyeIcon}
-            disabled={loading}
-          >
-            <Ionicons
-              name={showPassword ? "eye-outline" : "eye-off-outline"}
-              size={20}
-              color="#667eea"
-            />
-          </TouchableOpacity>
-        </Animated.View>
-
-        <TouchableOpacity
-          onPress={() => router.push('/Screens/ForgetPassword/ForgetPassword')}
-          activeOpacity={0.7}
-          disabled={loading}
-        >
-          <Text style={styles.forgotText}>Forgot password?</Text>
-        </TouchableOpacity>
-
-        <Animated.View style={[{ transform: [{ translateY: buttonSlide }, { scale: buttonScale }] }]}>
-          <TouchableOpacity
-            style={[styles.signInButton, loading && styles.signInButtonDisabled]}
-            onPress={handleLogin}
-            activeOpacity={0.9}
-            disabled={loading}
-          >
-            {loading ? (
-              <ActivityIndicator color="#fff" size="small" />
-            ) : (
-              <Text style={styles.signInButtonText}>Sign In</Text>
-            )}
-          </TouchableOpacity>
-        </Animated.View>
-
-        <Animated.View style={[styles.dividerContainer, { transform: [{ scaleX: dividerScale }] }]}>
-          <View style={styles.divider} />
-          <Text style={styles.orText}>OR</Text>
-          <View style={styles.divider} />
-        </Animated.View>
-
-        <Animated.View
-          style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-            transform: [{ translateY: socialSlide }],
-            opacity: socialSlide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
-          }}
-        >
-          <Animated.View style={{ flex: 1, marginRight: 8, transform: [{ scale: googleScale }] }}>
-            <TouchableOpacity
-              style={styles.socialButton}
-              onPress={() => {
-                animateSocialButton(googleScale);
-                Alert.alert('Coming Soon', 'Google Sign In will be available soon!');
-              }}
-              activeOpacity={0.8}
-              disabled={loading}
-            >
-              <Ionicons name="logo-google" size={24} color="#DB4437" />
-            </TouchableOpacity>
-          </Animated.View>
-
-          <Animated.View style={{ flex: 1, marginLeft: 8, transform: [{ scale: facebookScale }] }}>
-            <TouchableOpacity
-              style={styles.socialButton}
-              onPress={() => {
-                animateSocialButton(facebookScale);
-                Alert.alert('Coming Soon', 'Facebook Sign In will be available soon!');
-              }}
-              activeOpacity={0.8}
-              disabled={loading}
-            >
-              <Ionicons name="logo-facebook" size={24} color="#4267B2" />
-            </TouchableOpacity>
-          </Animated.View>
-        </Animated.View>
-
-        <Animated.View
-          style={[
-            styles.signUpContainer,
-            {
-              transform: [{ translateY: signUpSlide }],
-              opacity: signUpSlide.interpolate({ inputRange: [0, 50], outputRange: [1, 0] })
-            }
-          ]}
-        >
-          <Text style={styles.signUpText}>Don't have an account? </Text>
-          <TouchableOpacity
-            onPress={() => router.push('/Screens/SignUp/SignUp')}
+            style={styles.backButton}
+            onPress={() => router.back()}
             activeOpacity={0.7}
-            disabled={loading}
           >
-            <Text style={styles.signUpLink}>Sign Up</Text>
+            <Ionicons name="chevron-back" size={28} color="#fff" />
           </TouchableOpacity>
+
+          <Animated.View
+            style={[
+              styles.logoContainer,
+              {
+                transform: [{ scale: logoScale }, { rotate: logoRotation }],
+                opacity: logoOpacity,
+              }
+            ]}
+          >
+            <Ionicons name="shield-checkmark" size={50} color="#fff" />
+          </Animated.View>
+        </View>
+
+        {/* ✅ Card ke andar ScrollView — fields focus hone par scroll hota hai */}
+        <Animated.View style={[styles.card, { transform: [{ translateY: cardSlide }] }]}>
+          <ScrollView
+            ref={scrollViewRef}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.scrollContent}
+          >
+            {/* Title */}
+            <Animated.View style={{ transform: [{ translateY: titleSlide }], opacity: titleOpacity }}>
+              <Text style={styles.title}>Welcome Back!</Text>
+              <Text style={styles.subtitle}>Sign in to continue your journey</Text>
+            </Animated.View>
+
+            {/* Email Field */}
+            <Animated.View
+              style={[
+                styles.inputContainer,
+                {
+                  transform: [{ translateX: input1Slide }],
+                  opacity: input1Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
+                }
+              ]}
+            >
+              <View style={styles.iconWrapper}>
+                <Ionicons name="mail-outline" size={20} color="#667eea" />
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Email"
+                placeholderTextColor="#999"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                keyboardType="email-address"
+                editable={!loading}
+                // ✅ Focus hone par thoda scroll karo taake field dikhti rahe
+                onFocus={() => handleFieldFocus(0)}
+                returnKeyType="next"
+              />
+            </Animated.View>
+
+            {/* Password Field */}
+            <Animated.View
+              style={[
+                styles.inputContainer,
+                {
+                  transform: [{ translateX: input2Slide }],
+                  opacity: input2Slide.interpolate({ inputRange: [0, 100], outputRange: [1, 0] })
+                }
+              ]}
+            >
+              <View style={styles.iconWrapper}>
+                <Ionicons name="lock-closed-outline" size={20} color="#667eea" />
+              </View>
+              <TextInput
+                style={styles.input}
+                placeholder="Password"
+                placeholderTextColor="#999"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                editable={!loading}
+                // ✅ Password field focus hone par aur scroll karo
+                onFocus={() => handleFieldFocus(80)}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeIcon}
+                disabled={loading}
+              >
+                <Ionicons
+                  name={showPassword ? "eye-outline" : "eye-off-outline"}
+                  size={20}
+                  color="#667eea"
+                />
+              </TouchableOpacity>
+            </Animated.View>
+
+            {/* Forgot Password */}
+            <TouchableOpacity
+              onPress={() => router.push('/Screens/ForgetPassword/ForgetPassword')}
+              activeOpacity={0.7}
+              disabled={loading}
+            >
+              <Text style={styles.forgotText}>Forgot password?</Text>
+            </TouchableOpacity>
+
+            {/* Sign In Button */}
+            <Animated.View style={[{ transform: [{ translateY: buttonSlide }, { scale: buttonScale }] }]}>
+              <TouchableOpacity
+                style={[styles.signInButton, loading && styles.signInButtonDisabled]}
+                onPress={handleLogin}
+                activeOpacity={0.9}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.signInButtonText}>Sign In</Text>
+                )}
+              </TouchableOpacity>
+            </Animated.View>
+
+            {/* Sign Up Link */}
+            <View style={styles.signUpContainer}>
+              <Text style={styles.signUpText}>Don't have an account? </Text>
+              <TouchableOpacity
+                onPress={() => router.push('/Screens/SignUp/SignUp')}
+                activeOpacity={0.7}
+                disabled={loading}
+              >
+                <Text style={styles.signUpLink}>Sign Up</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Bottom padding taake keyboard ke peeche na chhuppe */}
+            <View style={{ height: 40 }} />
+          </ScrollView>
         </Animated.View>
       </Animated.View>
-    </Animated.View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -588,13 +553,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopLeftRadius: 40,
     borderTopRightRadius: 40,
-    paddingHorizontal: 30,
-    paddingTop: 40,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -5 },
     shadowOpacity: 0.1,
     shadowRadius: 10,
     elevation: 10,
+  },
+  // ✅ ScrollView ka content padding
+  scrollContent: {
+    paddingHorizontal: 30,
+    paddingTop: 40,
+    paddingBottom: 20,
   },
   title: {
     fontSize: 28,
@@ -657,46 +626,12 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
     elevation: 6,
   },
-  signInButtonDisabled: {
-    opacity: 0.7,
-  },
-  signInButtonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  divider: {
-    flex: 1,
-    height: 1,
-    backgroundColor: '#e0e0e0',
-  },
-  orText: {
-    marginHorizontal: 15,
-    color: '#999',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  socialButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 2,
-    borderColor: '#e8e8e8',
-    borderRadius: 16,
-    paddingVertical: 12,
-    backgroundColor: '#fff',
-  },
   signUpContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     marginTop: 12,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   signUpText: {
     color: '#666',
@@ -705,6 +640,14 @@ const styles = StyleSheet.create({
   signUpLink: {
     color: '#667eea',
     fontSize: 15,
+    fontWeight: 'bold',
+  },
+  signInButtonDisabled: {
+    opacity: 0.7,
+  },
+  signInButtonText: {
+    color: '#fff',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

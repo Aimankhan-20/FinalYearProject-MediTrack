@@ -43,11 +43,9 @@ export default function MyProfile({ navigation = {}, route = {} }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // ─── Profile photo state ──────────────────────────────────────────────────
   const [profileImage, setProfileImage] = useState(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
-  // ─── Vitals modal state ────────────────────────────────────────────────────
   const [vitalsModalVisible, setVitalsModalVisible] = useState(false);
   const [savingVitals, setSavingVitals] = useState(false);
   const [vitalsForm, setVitalsForm] = useState({
@@ -57,7 +55,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     temperature: "",
   });
 
-  // Fetch profile when screen focuses
+  // Har baar screen focus hone par fresh data fetch karo
   useFocusEffect(
     useCallback(() => {
       fetchProfile();
@@ -69,9 +67,10 @@ export default function MyProfile({ navigation = {}, route = {} }) {
       setLoading(true);
       const userData = await getProfile();
       setProfileData(userData);
-      // Load existing profile photo from backend if available
       if (userData?.profilePhoto) {
         setProfileImage(userData.profilePhoto);
+      } else {
+        setProfileImage(null);
       }
     } catch (error) {
       console.error("❌ Error fetching profile:", error);
@@ -96,10 +95,8 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     setRefreshing(false);
   };
 
-  // ─── Pick image from gallery ──────────────────────────────────────────────
   const handlePickProfilePhoto = async () => {
     try {
-      // Request gallery permission
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== "granted") {
         Alert.alert(
@@ -110,17 +107,16 @@ export default function MyProfile({ navigation = {}, route = {} }) {
         return;
       }
 
-      // Open image picker
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [1, 1],        // square crop
+        aspect: [1, 1],
         quality: 0.7,
       });
 
       if (!result.canceled && result.assets?.length > 0) {
         const selectedUri = result.assets[0].uri;
-        setProfileImage(selectedUri); // show instantly (optimistic update)
+        setProfileImage(selectedUri);
         await uploadPhoto(selectedUri);
       }
     } catch (error) {
@@ -129,27 +125,18 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     }
   };
 
-  // ─── Upload photo to backend ──────────────────────────────────────────────
   const uploadPhoto = async (uri) => {
     try {
       setUploadingPhoto(true);
-
       const filename = uri.split("/").pop();
       const match = /\.(\w+)$/.exec(filename ?? "");
       const type = match ? `image/${match[1]}` : "image/jpeg";
 
-      console.log('🖼️ URI:', uri);
-      console.log('🖼️ Filename:', filename);
-      console.log('🖼️ Type:', type);
-
       const formData = new FormData();
       formData.append("profilePhoto", { uri, name: filename, type });
 
-      console.log('📦 FormData ready, calling uploadProfilePhoto...');
-
       const response = await uploadProfilePhoto(formData);
 
-      // Update local state with URL returned from backend
       if (response?.profilePhotoUrl) {
         setProfileImage(response.profilePhotoUrl);
         setProfileData((prev) => ({
@@ -162,29 +149,27 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     } catch (error) {
       console.error("❌ Photo upload error:", error);
       Alert.alert("Upload Failed", "Could not save your photo. Please try again.");
-      // Revert optimistic update on failure
       setProfileImage(profileData?.profilePhoto || null);
     } finally {
       setUploadingPhoto(false);
     }
   };
 
-  // ─── Open vitals modal (pre-fill with existing values) ────────────────────
   const openVitalsModal = () => {
     if (profileData?.vitals) {
-      const { bpSystolic, bpDiastolic, bloodSugar, temperature } =
-        profileData.vitals;
+      const { bpSystolic, bpDiastolic, bloodSugar, temperature } = profileData.vitals;
       setVitalsForm({
         bpSystolic: bpSystolic ? String(bpSystolic) : "",
         bpDiastolic: bpDiastolic ? String(bpDiastolic) : "",
         bloodSugar: bloodSugar ? String(bloodSugar) : "",
         temperature: temperature ? String(temperature) : "",
       });
+    } else {
+      setVitalsForm({ bpSystolic: "", bpDiastolic: "", bloodSugar: "", temperature: "" });
     }
     setVitalsModalVisible(true);
   };
 
-  // ─── Save vitals to backend ───────────────────────────────────────────────
   const handleSaveVitals = async () => {
     const { bpSystolic, bpDiastolic, bloodSugar, temperature } = vitalsForm;
 
@@ -193,10 +178,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
       return;
     }
     if ((bpSystolic && !bpDiastolic) || (!bpSystolic && bpDiastolic)) {
-      Alert.alert(
-        "Error",
-        "Please enter both Systolic and Diastolic values for Blood Pressure."
-      );
+      Alert.alert("Error", "Please enter both Systolic and Diastolic values for Blood Pressure.");
       return;
     }
 
@@ -221,10 +203,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
       Alert.alert("Saved! ✅", "Your vital signs have been updated.");
     } catch (error) {
       console.error("❌ Error saving vitals:", error);
-      Alert.alert(
-        "Save Failed",
-        error.message || "Could not save vitals. Please try again."
-      );
+      Alert.alert("Save Failed", error.message || "Could not save vitals. Please try again.");
     } finally {
       setSavingVitals(false);
     }
@@ -235,7 +214,18 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     return `${vitals.bpSystolic}/${vitals.bpDiastolic}`;
   };
 
-  // ─── Loading state ────────────────────────────────────────────────────────
+  // BMI real-time calculate — height (ft) aur weight (kg) se
+  const calculateBMI = (height, weight) => {
+    if (!height || !weight) return null;
+    const h = parseFloat(height);
+    const w = parseFloat(weight);
+    if (isNaN(h) || isNaN(w) || h <= 0 || w <= 0) return null;
+    const heightInMeters = h * 0.3048;
+    const bmi = w / (heightInMeters * heightInMeters);
+    return bmi.toFixed(1);
+  };
+
+  // ─── Loading ──────────────────────────────────────────────────────────────
   if (loading || !profileData) {
     return (
       <SafeAreaView style={styles.container}>
@@ -243,9 +233,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() =>
-              navigation?.goBack ? navigation.goBack() : router.back()
-            }
+            onPress={() => (navigation?.goBack ? navigation.goBack() : router.back())}
           >
             <ChevronLeft size={24} color="#111827" />
           </TouchableOpacity>
@@ -262,6 +250,31 @@ export default function MyProfile({ navigation = {}, route = {} }) {
     );
   }
 
+  // ── Real-time BMI ─────────────────────────────────────────────────────────
+  const liveBMI = calculateBMI(profileData.height, profileData.weight);
+
+  // ── Health Summary — sirf wahi dikhao jo database mein actually hai ───────
+  // New user ke liye sab blank/zero aayega, koi fake data nahi
+  const dayMonitored = profileData.dayMonitored ?? 0;
+  const normalReadings = profileData.normalReadings || null; // null = "Not recorded yet"
+  const alerts = profileData.alerts ?? 0;
+  const healthScore = profileData.healthScore || null; // null = "N/A"
+
+  // Check karo patient ne kuch add kiya hai ya nahi
+  const hasPersonalInfo =
+    profileData.age ||
+    profileData.gender ||
+    profileData.dateOfBirth ||
+    profileData.phone ||
+    profileData.address;
+
+  const hasMedicalInfo =
+    profileData.bloodType ||
+    profileData.height ||
+    profileData.weight ||
+    profileData.allergies ||
+    profileData.medicalHistory;
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#F8FAFC" />
@@ -270,9 +283,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
       <View style={styles.header}>
         <TouchableOpacity
           style={styles.backButton}
-          onPress={() =>
-            navigation?.goBack ? navigation.goBack() : router.back()
-          }
+          onPress={() => (navigation?.goBack ? navigation.goBack() : router.back())}
         >
           <ChevronLeft size={24} color="#111827" />
         </TouchableOpacity>
@@ -306,8 +317,6 @@ export default function MyProfile({ navigation = {}, route = {} }) {
       >
         {/* ── Profile Card ── */}
         <View style={styles.profileCard}>
-
-          {/* ── Tappable Avatar with camera icon ── */}
           <TouchableOpacity
             style={styles.avatarContainer}
             onPress={handlePickProfilePhoto}
@@ -324,23 +333,19 @@ export default function MyProfile({ navigation = {}, route = {} }) {
               ) : (
                 <User size={40} color="#3B82F6" />
               )}
-
-              {/* Upload spinner overlay */}
               {uploadingPhoto && (
                 <View style={styles.avatarUploadOverlay}>
                   <ActivityIndicator size="small" color="#FFFFFF" />
                 </View>
               )}
             </View>
-
-            {/* Camera badge (replaces the old checkmark badge) */}
             <View style={styles.avatarCameraBadge}>
               <Camera size={14} color="#FFFFFF" />
             </View>
           </TouchableOpacity>
 
           <Text style={styles.profileName}>
-            {profileData.name || profileData.fullName || "User"}
+            {profileData.fullName || profileData.name || "User"}
           </Text>
           <Text style={styles.profileId}>
             Patient ID: {profileData.patientId || "N/A"}
@@ -352,16 +357,15 @@ export default function MyProfile({ navigation = {}, route = {} }) {
                 {profileData.status || "Active"}
               </Text>
             </View>
-            <Text style={styles.monitoringText}>
-              Monitoring Since {profileData.monitoringSince || "Jan 2024"}
-            </Text>
+            {profileData.monitoringSince ? (
+              <Text style={styles.monitoringText}>
+                Monitoring Since {profileData.monitoringSince}
+              </Text>
+            ) : null}
           </View>
-
-          {/* "Change Photo" button below */}
-         
         </View>
 
-        {/* ── VITAL SIGNS SECTION ── */}
+        {/* ── VITAL SIGNS ── */}
         <View style={styles.section}>
           <View style={styles.sectionHeaderRow}>
             <Text style={styles.sectionTitle}>My Vital Signs</Text>
@@ -370,66 +374,70 @@ export default function MyProfile({ navigation = {}, route = {} }) {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.vitalsCard}>
-            {/* Blood Pressure */}
-            <View style={styles.vitalItem}>
-              <View style={[styles.vitalIconBox, { backgroundColor: "#FCEBEB" }]}>
-                <Heart size={20} color="#E24B4A" />
+          {profileData.vitals &&
+          (profileData.vitals.bpSystolic ||
+            profileData.vitals.bloodSugar ||
+            profileData.vitals.temperature) ? (
+            <View style={styles.vitalsCard}>
+              {/* Blood Pressure */}
+              <View style={styles.vitalItem}>
+                <View style={[styles.vitalIconBox, { backgroundColor: "#FCEBEB" }]}>
+                  <Heart size={20} color="#E24B4A" />
+                </View>
+                <Text style={styles.vitalValue}>{formatBP(profileData.vitals)}</Text>
+                <Text style={styles.vitalUnit}>mmHg</Text>
+                <Text style={styles.vitalLabel}>Blood{"\n"}Pressure</Text>
+                {profileData.vitals?.recordedAt && (
+                  <Text style={styles.vitalTime}>
+                    {formatTimeAgo(profileData.vitals.recordedAt)}
+                  </Text>
+                )}
               </View>
-              <Text style={styles.vitalValue}>{formatBP(profileData.vitals)}</Text>
-              <Text style={styles.vitalUnit}>mmHg</Text>
-              <Text style={styles.vitalLabel}>Blood{"\n"}Pressure</Text>
-              {profileData.vitals?.recordedAt && (
-                <Text style={styles.vitalTime}>
-                  {formatTimeAgo(profileData.vitals.recordedAt)}
+
+              <View style={styles.vitalDivider} />
+
+              {/* Blood Sugar */}
+              <View style={styles.vitalItem}>
+                <View style={[styles.vitalIconBox, { backgroundColor: "#FAEEDA" }]}>
+                  <Droplets size={20} color="#BA7517" />
+                </View>
+                <Text style={styles.vitalValue}>
+                  {profileData.vitals?.bloodSugar ?? "N/A"}
                 </Text>
-              )}
-            </View>
-
-            <View style={styles.vitalDivider} />
-
-            {/* Blood Sugar */}
-            <View style={styles.vitalItem}>
-              <View style={[styles.vitalIconBox, { backgroundColor: "#FAEEDA" }]}>
-                <Droplets size={20} color="#BA7517" />
+                <Text style={styles.vitalUnit}>mg/dL</Text>
+                <Text style={styles.vitalLabel}>Blood{"\n"}Sugar</Text>
+                {profileData.vitals?.recordedAt && (
+                  <Text style={styles.vitalTime}>
+                    {formatTimeAgo(profileData.vitals.recordedAt)}
+                  </Text>
+                )}
               </View>
-              <Text style={styles.vitalValue}>
-                {profileData.vitals?.bloodSugar ?? "N/A"}
-              </Text>
-              <Text style={styles.vitalUnit}>mg/dL</Text>
-              <Text style={styles.vitalLabel}>Blood{"\n"}Sugar</Text>
-              {profileData.vitals?.recordedAt && (
-                <Text style={styles.vitalTime}>
-                  {formatTimeAgo(profileData.vitals.recordedAt)}
+
+              <View style={styles.vitalDivider} />
+
+              {/* Temperature */}
+              <View style={styles.vitalItem}>
+                <View style={[styles.vitalIconBox, { backgroundColor: "#EAF3DE" }]}>
+                  <Thermometer size={20} color="#3B6D11" />
+                </View>
+                <Text style={styles.vitalValue}>
+                  {profileData.vitals?.temperature ?? "N/A"}
                 </Text>
-              )}
-            </View>
-
-            <View style={styles.vitalDivider} />
-
-            {/* Temperature */}
-            <View style={styles.vitalItem}>
-              <View style={[styles.vitalIconBox, { backgroundColor: "#EAF3DE" }]}>
-                <Thermometer size={20} color="#3B6D11" />
+                <Text style={styles.vitalUnit}>°F</Text>
+                <Text style={styles.vitalLabel}>Body{"\n"}Temp</Text>
+                {profileData.vitals?.recordedAt && (
+                  <Text style={styles.vitalTime}>
+                    {formatTimeAgo(profileData.vitals.recordedAt)}
+                  </Text>
+                )}
               </View>
-              <Text style={styles.vitalValue}>
-                {profileData.vitals?.temperature ?? "N/A"}
-              </Text>
-              <Text style={styles.vitalUnit}>°F</Text>
-              <Text style={styles.vitalLabel}>Body{"\n"}Temp</Text>
-              {profileData.vitals?.recordedAt && (
-                <Text style={styles.vitalTime}>
-                  {formatTimeAgo(profileData.vitals.recordedAt)}
-                </Text>
-              )}
             </View>
-          </View>
-
-          {!profileData.vitals && (
+          ) : (
+            /* Naya user — koi vitals nahi, sirf banner dikhao */
             <View style={styles.noVitalsBanner}>
               <AlertTriangle size={16} color="#BA7517" />
               <Text style={styles.noVitalsText}>
-                No vitals recorded yet. Tap "Update Now" to add yours.
+                No vitals recorded yet. Tap "+ Update Now" to add your first reading.
               </Text>
             </View>
           )}
@@ -439,70 +447,216 @@ export default function MyProfile({ navigation = {}, route = {} }) {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Personal Information</Text>
           <View style={styles.infoCard}>
-            <InfoRow label="Full Name:" value={profileData.fullName || profileData.name || "Not set"} />
-            <InfoRow label="Age:" value={profileData.age || "Not set"} />
-            <InfoRow label="Gender:" value={profileData.gender || "Not set"} />
-            <InfoRow label="Date of Birth:" value={profileData.dateOfBirth || "Not set"} icon={Calendar} />
-            <InfoRow label="Phone:" value={profileData.phone || "Not set"} icon={Phone} />
-            <InfoRow label="Address:" value={profileData.address || "Not set"} icon={MapPin} />
+            <InfoRow
+              label="Full Name"
+              value={
+                profileData.fullName || profileData.name
+                  ? (profileData.fullName || profileData.name)
+                  : null
+              }
+            />
+            <InfoRow
+              label="Age"
+              value={
+                profileData.age && String(profileData.age).trim() !== ""
+                  ? `${profileData.age} years`
+                  : null
+              }
+            />
+            <InfoRow
+              label="Gender"
+              value={
+                profileData.gender && profileData.gender.trim() !== ""
+                  ? profileData.gender
+                  : null
+              }
+            />
+            <InfoRow
+              label="Date of Birth"
+              value={
+                profileData.dateOfBirth && profileData.dateOfBirth.trim() !== ""
+                  ? profileData.dateOfBirth
+                  : null
+              }
+              icon={Calendar}
+            />
+            <InfoRow
+              label="Phone"
+              value={
+                profileData.phone && profileData.phone.trim() !== ""
+                  ? profileData.phone
+                  : null
+              }
+              icon={Phone}
+            />
+            <InfoRow
+              label="Address"
+              value={
+                profileData.address && profileData.address.trim() !== ""
+                  ? profileData.address
+                  : null
+              }
+              icon={MapPin}
+              isLast
+            />
           </View>
+
+          {/* Agar koi personal info nahi hai toh hint dikhao */}
+          {!hasPersonalInfo && (
+            <View style={styles.emptyHint}>
+              <Text style={styles.emptyHintText}>
+                Tap "Edit" to fill in your personal details.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── Medical Information ── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Medical Information</Text>
           <View style={styles.infoCard}>
-            <InfoRow label="Blood Type:" value={profileData.bloodType || "Not set"} />
-            <InfoRow label="Height:" value={profileData.height ? `${profileData.height} ft` : "Not set"} />
-            <InfoRow label="Weight:" value={profileData.weight ? `${profileData.weight} kg` : "Not set"} />
+            <InfoRow
+              label="Blood Type"
+              value={
+                profileData.bloodType && profileData.bloodType.trim() !== ""
+                  ? profileData.bloodType
+                  : null
+              }
+            />
+            <InfoRow
+              label="Height"
+              value={
+                profileData.height && String(profileData.height).trim() !== ""
+                  ? `${profileData.height} ft`
+                  : null
+              }
+            />
+            <InfoRow
+              label="Weight"
+              value={
+                profileData.weight && String(profileData.weight).trim() !== ""
+                  ? `${profileData.weight} kg`
+                  : null
+              }
+            />
+
+            {/* BMI — sirf tab dikhao jab height aur weight dono ho */}
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>BMI:</Text>
+              <Text style={styles.infoLabel}>BMI</Text>
               <View style={styles.bmiContainer}>
-                <Text style={styles.infoValue}>{profileData.bmi || "N/A"}</Text>
-                <View style={styles.bmiBadge}>
-                  <Text style={styles.bmiBadgeText}>{getBMIStatus(profileData.bmi)}</Text>
-                </View>
+                {liveBMI ? (
+                  <>
+                    <Text style={styles.infoValue}>{liveBMI}</Text>
+                    <View
+                      style={[
+                        styles.bmiBadge,
+                        { backgroundColor: getBMIBadgeColor(liveBMI).bg },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.bmiBadgeText,
+                          { color: getBMIBadgeColor(liveBMI).text },
+                        ]}
+                      >
+                        {getBMIStatus(liveBMI)}
+                      </Text>
+                    </View>
+                  </>
+                ) : (
+                  <Text style={styles.notSetText}>
+                    Add height & weight
+                  </Text>
+                )}
               </View>
             </View>
-            <InfoRow label="Allergies:" value={profileData.allergies || "None"} />
+
+            <InfoRow
+              label="Allergies"
+              value={
+                profileData.allergies &&
+                profileData.allergies.trim() !== "" &&
+                profileData.allergies.toLowerCase() !== "none"
+                  ? profileData.allergies
+                  : null
+              }
+            />
+            <InfoRow
+              label="Medical History"
+              value={
+                profileData.medicalHistory &&
+                profileData.medicalHistory.trim() !== "" &&
+                profileData.medicalHistory.toLowerCase() !== "none"
+                  ? profileData.medicalHistory
+                  : null
+              }
+              isLast
+            />
           </View>
+
+          {/* Agar koi medical info nahi hai toh hint dikhao */}
+          {!hasMedicalInfo && (
+            <View style={styles.emptyHint}>
+              <Text style={styles.emptyHintText}>
+                Tap "Edit" to add your medical details.
+              </Text>
+            </View>
+          )}
         </View>
 
         {/* ── Health Summary ── */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Health Summary</Text>
-          <View style={styles.summaryGrid}>
-            <View style={[styles.summaryCard, { backgroundColor: "#DBEAFE" }]}>
-              <Text style={styles.summaryValue}>{profileData.dayMonitored || 0}</Text>
-              <Text style={styles.summaryLabel}>Day Monitored</Text>
+
+          {/* Naya user — agar sab zero/null hai toh ek info banner dikhao */}
+          {dayMonitored === 0 && !normalReadings && alerts === 0 && !healthScore ? (
+            <View style={styles.healthSummaryEmptyBanner}>
+              <Activity size={18} color="#3B82F6" />
+              <Text style={styles.healthSummaryEmptyText}>
+                Your health summary will appear here as you use the app and log your vitals.
+              </Text>
             </View>
-            <View style={[styles.summaryCard, { backgroundColor: "#D1FAE5" }]}>
-              <Text style={styles.summaryValue}>{profileData.normalReadings || "100%"}</Text>
-              <Text style={styles.summaryLabel}>Normal Readings</Text>
-            </View>
-            <View style={[styles.summaryCard, { backgroundColor: "#FEF3C7" }]}>
-              <View style={styles.alertBadge}>
-                <AlertTriangle size={16} color="#F59E0B" />
-                <Text style={[styles.summaryValue, { fontSize: 28 }]}>{profileData.alerts || 0}</Text>
+          ) : (
+            <View style={styles.summaryGrid}>
+              <View style={[styles.summaryCard, { backgroundColor: "#DBEAFE" }]}>
+                <Text style={styles.summaryValue}>{dayMonitored}</Text>
+                <Text style={styles.summaryLabel}>Days Monitored</Text>
               </View>
-              <Text style={styles.summaryLabel}>Alerts this month</Text>
-            </View>
-            <View style={[styles.summaryCard, { backgroundColor: "#D1FAE5" }]}>
-              <View style={styles.scoreBadge}>
-                <Activity size={20} color="#10B981" />
-                <Text style={[styles.summaryValue, { fontSize: 28, color: "#10B981" }]}>
-                  {profileData.healthScore || "A+"}
+
+              <View style={[styles.summaryCard, { backgroundColor: "#D1FAE5" }]}>
+                <Text style={styles.summaryValue}>
+                  {normalReadings || "—"}
                 </Text>
+                <Text style={styles.summaryLabel}>Normal Readings</Text>
               </View>
-              <Text style={styles.summaryLabel}>Health Score</Text>
+
+              <View style={[styles.summaryCard, { backgroundColor: "#FEF3C7" }]}>
+                <View style={styles.alertBadge}>
+                  <AlertTriangle size={16} color="#F59E0B" />
+                  <Text style={[styles.summaryValue, { fontSize: 28 }]}>{alerts}</Text>
+                </View>
+                <Text style={styles.summaryLabel}>Alerts this month</Text>
+              </View>
+
+              <View style={[styles.summaryCard, { backgroundColor: "#D1FAE5" }]}>
+                <View style={styles.scoreBadge}>
+                  <Activity size={20} color="#10B981" />
+                  <Text
+                    style={[styles.summaryValue, { fontSize: 28, color: "#10B981" }]}
+                  >
+                    {healthScore || "—"}
+                  </Text>
+                </View>
+                <Text style={styles.summaryLabel}>Health Score</Text>
+              </View>
             </View>
-          </View>
+          )}
         </View>
       </ScrollView>
 
       <Footer />
 
-      {/* ── VITALS UPDATE MODAL ── */}
+      {/* ── VITALS MODAL ── */}
       <Modal
         visible={vitalsModalVisible}
         animationType="slide"
@@ -525,9 +679,7 @@ export default function MyProfile({ navigation = {}, route = {} }) {
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalTitle}>Update Vital Signs</Text>
-                <Text style={styles.modalSubtitle}>
-                  Enter your current readings
-                </Text>
+                <Text style={styles.modalSubtitle}>Enter your current readings</Text>
               </View>
               <TouchableOpacity
                 style={styles.modalCloseBtn}
@@ -648,12 +800,26 @@ const getBMIStatus = (bmi) => {
   return "Obese";
 };
 
-const InfoRow = ({ label, value, icon: Icon }) => (
-  <View style={styles.infoRow}>
+const getBMIBadgeColor = (bmi) => {
+  const v = parseFloat(bmi);
+  if (v < 18.5) return { bg: "#DBEAFE", text: "#1D4ED8" };
+  if (v < 25) return { bg: "#D1FAE5", text: "#10B981" };
+  if (v < 30) return { bg: "#FEF3C7", text: "#D97706" };
+  return { bg: "#FEE2E2", text: "#EF4444" };
+};
+
+// ─── InfoRow — agar value null/empty hai to "Not set" dikhao ─────────────────
+const InfoRow = ({ label, value, icon: Icon, isLast = false }) => (
+  <View style={[styles.infoRow, isLast && { borderBottomWidth: 0 }]}>
     <Text style={styles.infoLabel}>{label}</Text>
     <View style={styles.infoValueContainer}>
-      {Icon && <Icon size={16} color="#6B7280" style={styles.infoIcon} />}
-      <Text style={styles.infoValue}>{value}</Text>
+      {Icon && value ? <Icon size={14} color="#6B7280" style={styles.infoIcon} /> : null}
+      <Text
+        style={[styles.infoValue, !value && styles.notSetText]}
+        numberOfLines={2}
+      >
+        {value || "Not set"}
+      </Text>
     </View>
   </View>
 );
@@ -692,61 +858,66 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
-
-  // ── Avatar ──
   avatarContainer: { marginBottom: 16, position: "relative" },
   avatar: {
-    width: 100, height: 100, borderRadius: 50,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     backgroundColor: "#DBEAFE",
-    justifyContent: "center", alignItems: "center",
+    justifyContent: "center",
+    alignItems: "center",
     overflow: "hidden",
   },
   avatarImage: { width: 100, height: 100, borderRadius: 50 },
   avatarUploadOverlay: {
-    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: "rgba(0,0,0,0.45)",
-    justifyContent: "center", alignItems: "center",
+    justifyContent: "center",
+    alignItems: "center",
     borderRadius: 50,
   },
-  // Camera icon badge (bottom-right of avatar)
   avatarCameraBadge: {
-    position: "absolute", bottom: 0, right: 0,
-    width: 30, height: 30, borderRadius: 15,
+    position: "absolute",
+    bottom: 0, right: 0,
+    width: 30, height: 30,
+    borderRadius: 15,
     backgroundColor: "#3B82F6",
-    justifyContent: "center", alignItems: "center",
-    borderWidth: 2, borderColor: "#FFFFFF",
+    justifyContent: "center",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "#FFFFFF",
   },
-
   profileName: { fontSize: 24, fontWeight: "bold", color: "#111827", marginBottom: 4 },
   profileId: { fontSize: 14, color: "#6B7280", marginBottom: 12 },
-  statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 16 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   statusBadge: {
-    flexDirection: "row", alignItems: "center",
-    backgroundColor: "#D1FAE5", paddingHorizontal: 12,
-    paddingVertical: 4, borderRadius: 12,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#D1FAE5",
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
   statusDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#10B981", marginRight: 6 },
   statusText: { fontSize: 14, fontWeight: "600", color: "#10B981" },
   monitoringText: { fontSize: 12, color: "#6B7280" },
-  changePhotoButton: {
-    backgroundColor: "#EFF6FF", paddingHorizontal: 24,
-    paddingVertical: 10, borderRadius: 8,
-    borderWidth: 1, borderColor: "#3B82F6",
-    minWidth: 180, alignItems: "center",
-  },
-  changePhotoText: { fontSize: 14, fontWeight: "600", color: "#3B82F6" },
 
   // Section
   section: { paddingHorizontal: 16, marginBottom: 12 },
   sectionTitle: { fontSize: 18, fontWeight: "bold", color: "#111827", marginBottom: 12 },
   sectionHeaderRow: {
-    flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", marginBottom: 12,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
   },
   updateVitalsBtn: {
     backgroundColor: "#EFF6FF",
-    borderWidth: 1, borderColor: "#3B82F6",
-    paddingHorizontal: 14, paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "#3B82F6",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 8,
   },
   updateVitalsBtnText: { fontSize: 13, fontWeight: "600", color: "#3B82F6" },
@@ -765,45 +936,116 @@ const styles = StyleSheet.create({
   },
   vitalItem: { flex: 1, alignItems: "center", paddingVertical: 16, paddingHorizontal: 8 },
   vitalDivider: { width: 1, backgroundColor: "#F3F4F6", marginVertical: 12 },
-  vitalIconBox: { width: 38, height: 38, borderRadius: 10, justifyContent: "center", alignItems: "center", marginBottom: 8 },
+  vitalIconBox: {
+    width: 38, height: 38,
+    borderRadius: 10,
+    justifyContent: "center",
+    alignItems: "center",
+    marginBottom: 8,
+  },
   vitalValue: { fontSize: 16, fontWeight: "700", color: "#111827" },
   vitalUnit: { fontSize: 10, color: "#9CA3AF", marginTop: 1 },
   vitalLabel: { fontSize: 11, color: "#6B7280", textAlign: "center", marginTop: 4, lineHeight: 15 },
   vitalTime: { fontSize: 10, color: "#9CA3AF", marginTop: 4 },
 
   noVitalsBanner: {
-    flexDirection: "row", alignItems: "center",
+    flexDirection: "row",
+    alignItems: "center",
     backgroundColor: "#FAEEDA",
-    borderRadius: 8, padding: 10, marginTop: 10, gap: 8,
+    borderRadius: 8,
+    padding: 12,
+    gap: 8,
   },
-  noVitalsText: { fontSize: 12, color: "#854F0B", flex: 1 },
+  noVitalsText: { fontSize: 12, color: "#854F0B", flex: 1, lineHeight: 18 },
 
   // Info card
   infoCard: {
-    backgroundColor: "#FFFFFF", borderRadius: 12, padding: 16,
-    shadowColor: "#000", shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05, shadowRadius: 2, elevation: 2,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   infoRow: {
-    flexDirection: "row", justifyContent: "space-between",
-    alignItems: "center", paddingVertical: 12,
-    borderBottomWidth: 1, borderBottomColor: "#F3F4F6",
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F3F4F6",
   },
   infoLabel: { fontSize: 14, color: "#6B7280", flex: 1 },
-  infoValueContainer: { flexDirection: "row", alignItems: "center", flex: 1.5 },
+  infoValueContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1.5,
+    justifyContent: "flex-end",
+  },
   infoIcon: { marginRight: 6 },
   infoValue: { fontSize: 14, fontWeight: "600", color: "#111827", textAlign: "right", flex: 1 },
-  bmiContainer: { flexDirection: "row", alignItems: "center", gap: 8, flex: 1.5, justifyContent: "flex-end" },
-  bmiBadge: { backgroundColor: "#D1FAE5", paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4 },
-  bmiBadgeText: { fontSize: 11, fontWeight: "600", color: "#10B981" },
+  notSetText: { fontSize: 13, color: "#9CA3AF", fontStyle: "italic", textAlign: "right", flex: 1 },
+
+  bmiContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    flex: 1.5,
+    justifyContent: "flex-end",
+  },
+  bmiBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  bmiBadgeText: { fontSize: 11, fontWeight: "600" },
+
+  // Empty hint below info cards
+  emptyHint: {
+    marginTop: 8,
+    paddingHorizontal: 4,
+  },
+  emptyHintText: {
+    fontSize: 12,
+    color: "#9CA3AF",
+    fontStyle: "italic",
+  },
+
+  // Health Summary — empty state
+  healthSummaryEmptyBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#EFF6FF",
+    borderRadius: 10,
+    padding: 14,
+    gap: 10,
+  },
+  healthSummaryEmptyText: {
+    fontSize: 13,
+    color: "#1D4ED8",
+    flex: 1,
+    lineHeight: 20,
+  },
 
   // Summary grid
-  summaryGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", gap: 12 },
+  summaryGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "space-between",
+    gap: 12,
+  },
   summaryCard: {
-    width: "48%", borderRadius: 12, padding: 16,
-    alignItems: "center", shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05,
-    shadowRadius: 2, elevation: 2,
+    width: "48%",
+    borderRadius: 12,
+    padding: 16,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
   },
   summaryValue: { fontSize: 32, fontWeight: "bold", color: "#111827", marginBottom: 4 },
   summaryLabel: { fontSize: 12, color: "#6B7280", textAlign: "center" },
@@ -813,36 +1055,64 @@ const styles = StyleSheet.create({
   // Modal
   modalOverlay: { flex: 1, justifyContent: "flex-end" },
   modalBackdrop: {
-    position: "absolute", top: 0, left: 0, right: 0, bottom: 0,
+    position: "absolute",
+    top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: "rgba(0,0,0,0.45)",
   },
   modalPanel: {
     backgroundColor: "#FFFFFF",
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingHorizontal: 20, paddingBottom: 34, paddingTop: 12,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 20,
+    paddingBottom: 34,
+    paddingTop: 12,
   },
-  modalHandle: { width: 40, height: 4, backgroundColor: "#D1D5DB", borderRadius: 4, alignSelf: "center", marginBottom: 16 },
-  modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 },
+  modalHandle: {
+    width: 40, height: 4,
+    backgroundColor: "#D1D5DB",
+    borderRadius: 4,
+    alignSelf: "center",
+    marginBottom: 16,
+  },
+  modalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 20,
+  },
   modalTitle: { fontSize: 18, fontWeight: "700", color: "#111827" },
   modalSubtitle: { fontSize: 13, color: "#6B7280", marginTop: 2 },
-  modalCloseBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: "#F3F4F6", justifyContent: "center", alignItems: "center" },
-
-  // Form
+  modalCloseBtn: {
+    width: 34, height: 34,
+    borderRadius: 17,
+    backgroundColor: "#F3F4F6",
+    justifyContent: "center",
+    alignItems: "center",
+  },
   formGroup: { marginBottom: 16 },
   formLabelRow: { flexDirection: "row", alignItems: "center", marginBottom: 8 },
   formDot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   formLabel: { fontSize: 13, fontWeight: "600", color: "#374151" },
   formInput: {
-    borderWidth: 1, borderColor: "#D1D5DB",
-    borderRadius: 10, paddingHorizontal: 14,
-    paddingVertical: 12, fontSize: 15, color: "#111827",
+    borderWidth: 1,
+    borderColor: "#D1D5DB",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: "#111827",
     backgroundColor: "#FAFAFA",
   },
   bpRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   bpInputWrapper: { flex: 1, flexDirection: "row", alignItems: "center" },
   bpSlash: { fontSize: 22, color: "#9CA3AF", marginLeft: 8 },
-
-  saveBtn: { backgroundColor: "#3B82F6", borderRadius: 12, paddingVertical: 14, alignItems: "center", marginTop: 6 },
+  saveBtn: {
+    backgroundColor: "#3B82F6",
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: "center",
+    marginTop: 6,
+  },
   saveBtnDisabled: { opacity: 0.6 },
   saveBtnText: { color: "#FFFFFF", fontSize: 16, fontWeight: "700" },
 });

@@ -4,7 +4,7 @@ const axios = require('axios');
 const VitalReading = require('../models/VitalReadings');
 const { guardianAuth } = require('./guardianAuthRoutes');
 
-const PATIENT_API = 'http://192.168.1.6:5000';
+const PATIENT_API = 'http://192.168.1.7:5000';
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/guardian/vitals/latest
 // Patient ka latest vital reading

@@ -28,11 +28,9 @@ export default function Menu({ visible, onClose }) {
   const router = useRouter();
   const slideAnim = React.useRef(new Animated.Value(-width * 0.75)).current;
   
-  // State for user data
   const [userName, setUserName] = React.useState('User');
   const [userEmail, setUserEmail] = React.useState('xyz@gmail.com');
 
-  // Fetch user data from AsyncStorage
   React.useEffect(() => {
     const getUserData = async () => {
       try {
@@ -41,11 +39,9 @@ export default function Menu({ visible, onClose }) {
         
         if (email) {
           setUserEmail(email);
-          // If name is not stored, extract from email
           if (name) {
             setUserName(name);
           } else {
-            // Extract name from email (part before @)
             const extractedName = email.split('@')[0];
             setUserName(extractedName.charAt(0).toUpperCase() + extractedName.slice(1));
           }
@@ -84,13 +80,36 @@ export default function Menu({ visible, onClose }) {
     }, 300);
   };
 
+  // ✅ FIXED: Logout — purana user ka sab data clear karo
+const handleLogout = async () => {
+  try {
+    await AsyncStorage.multiRemove([
+      'userToken',
+      'userData',
+      'username',
+      'userName',
+      'userEmail',
+      'email',
+      'userId',
+      'watchPaired',
+      'watchName',
+    ]);
+    console.log('✅ AsyncStorage cleared on logout');
+  } catch (error) {
+    console.error('Logout clear error:', error);
+  } finally {
+    onClose();
+    // ✅ WelcomeScreen pe bhejo — replace taake back na ja sake
+    router.replace('/Screens/WelcomeScreen/WelcomeScreen');
+  }
+};
+
   const menuItems = [
     {
       icon: Phone,
       label: "Emergency Contact",
       route: "/Screens/EmergencyContact/EmergencyContact",
     },
-   
     {
       icon: Info,
       label: "About",
@@ -165,13 +184,10 @@ export default function Menu({ visible, onClose }) {
             })}
           </View>
 
-          {/* Logout Button */}
+          {/* ✅ FIXED: Logout Button — ab handleLogout call hoga */}
           <TouchableOpacity
             style={styles.logoutButton}
-            onPress={() => {
-              onClose();
-              router.push('/Screens/WelcomeScreen/WelcomeScreen');
-            }}
+            onPress={handleLogout}
             activeOpacity={0.7}
           >
             <LogOut size={20} color="#EF4444" />

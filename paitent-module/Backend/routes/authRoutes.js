@@ -3,13 +3,199 @@ const router = express.Router();
 const User = require("../models/User");
 const VitalReading = require('../models/VitalReadings');
 const jwt = require("jsonwebtoken");
-
+const nodemailer = require("nodemailer");
 
 const JWT_SECRET = process.env.JWT_SECRET || "meditrack_super_secret_key_2024";
 
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+
+// ===== NODEMAILER TRANSPORTER SETUP =====
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+// ===== WELCOME EMAIL FUNCTION =====
+const sendWelcomeEmail = async (userName, userEmail) => {
+  try {
+    const mailOptions = {
+      from: `"MediTrack 🏥" <${process.env.EMAIL_USER}>`,
+      to: userEmail,
+      subject: ' Welcome to MediTrack — Your Health Journey Begins!',
+      html: `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8" />
+            <style>
+              body {
+                font-family: 'Segoe UI', Arial, sans-serif;
+                background-color: #f4f6fb;
+                margin: 0;
+                padding: 0;
+              }
+              .container {
+                max-width: 600px;
+                margin: 40px auto;
+                background: #ffffff;
+                border-radius: 20px;
+                overflow: hidden;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+              }
+              .header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 40px 30px;
+                text-align: center;
+              }
+              .header h1 {
+                color: #ffffff;
+                font-size: 28px;
+                margin: 0 0 8px 0;
+                letter-spacing: 1px;
+              }
+              .header p {
+                color: rgba(255,255,255,0.85);
+                font-size: 15px;
+                margin: 0;
+              }
+              .shield {
+                font-size: 60px;
+                margin-bottom: 15px;
+                display: block;
+              }
+              .body {
+                padding: 35px 35px 20px 35px;
+              }
+              .greeting {
+                font-size: 20px;
+                font-weight: 600;
+                color: #333;
+                margin-bottom: 12px;
+              }
+              .message {
+                font-size: 15px;
+                color: #555;
+                line-height: 1.7;
+                margin-bottom: 25px;
+              }
+              .features {
+                background: #f8f6ff;
+                border-radius: 14px;
+                padding: 20px 25px;
+                margin-bottom: 25px;
+              }
+              .features h3 {
+                color: #667eea;
+                font-size: 15px;
+                margin: 0 0 14px 0;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+              }
+              .feature-item {
+                display: flex;
+                align-items: center;
+                font-size: 14px;
+                color: #444;
+                margin-bottom: 10px;
+              }
+              .feature-item span {
+                margin-right: 10px;
+                font-size: 18px;
+              }
+              .btn {
+                display: block;
+                width: fit-content;
+                margin: 0 auto 30px auto;
+                background: linear-gradient(135deg, #667eea, #764ba2);
+                color: #ffffff;
+                text-decoration: none;
+                padding: 14px 40px;
+                border-radius: 50px;
+                font-size: 15px;
+                font-weight: 600;
+                text-align: center;
+                letter-spacing: 0.5px;
+              }
+              .divider {
+                height: 1px;
+                background: #eeeeee;
+                margin: 0 35px;
+              }
+              .footer {
+                padding: 20px 35px 30px 35px;
+                text-align: center;
+              }
+              .footer p {
+                font-size: 12px;
+                color: #aaa;
+                margin: 4px 0;
+                line-height: 1.6;
+              }
+              .footer strong {
+                color: #667eea;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <!-- Header -->
+              <div class="header">
+                <span class="shield"></span>
+                <h1>MediTrack</h1>
+                <p>Your Personal Health Monitoring Companion</p>
+              </div>
+
+              <!-- Body -->
+              <div class="body">
+                <p class="greeting">Hello, ${userName}! </p>
+                <p class="message">
+                  Welcome to <strong>MediTrack</strong>! Your account has been successfully created.
+                  We're excited to have you on board. MediTrack will help you monitor your health
+                  vitals in real-time, track your progress, and stay connected with your guardian
+                  for a healthier and safer life. 
+                </p>
+
+                <!-- Features -->
+                <div class="features">
+                  <h3> What you can do with MediTrack</h3>
+                  <div class="feature-item"><span></span> Real-time heart rate & SpO2 monitoring</div>
+                  <div class="feature-item"><span></span> Track blood pressure & blood sugar</div>
+                  <div class="feature-item"><span></span> AI-powered health predictions</div>
+                  <div class="feature-item"><span></span> Automatic emergency alerts</div>
+                  <div class="feature-item"><span></span> Stay connected with your guardian</div>
+                </div>
+
+                <p class="message" style="font-size:14px; color:#777;">
+                  If you did not create this account, please ignore this email or contact our support team immediately.
+                </p>
+              </div>
+
+              <div class="divider"></div>
+
+              <!-- Footer -->
+              <div class="footer">
+                <p>This email was sent to <strong>${userEmail}</strong></p>
+                <p>© 2025 <strong>MediTrack</strong> — All rights reserved.</p>
+                <p style="margin-top:8px;">Made with  for your health</p>
+              </div>
+            </div>
+          </body>
+        </html>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Welcome email sent to: ${userEmail}`);
+  } catch (error) {
+    // Email fail hone par app crash nahi hoga
+    console.log(`⚠️ Welcome email failed (non-critical): ${error.message}`);
+  }
+};
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -28,12 +214,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ 
   storage: storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const allowedTypes = /jpeg|jpg|png|gif/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
-    
     if (mimetype && extname) {
       return cb(null, true);
     } else {
@@ -92,6 +277,9 @@ router.post("/signup", async (req, res) => {
       JWT_SECRET,
       { expiresIn: "30d" }
     );
+
+    // ✅ Welcome email bhejo — async hai, response wait nahi karega
+    sendWelcomeEmail(name.trim(), email.toLowerCase().trim());
 
     res.status(201).json({
       message: "Account created successfully",
@@ -162,21 +350,16 @@ router.post("/signin", async (req, res) => {
 router.get("/profile", authenticateToken, async (req, res) => {
   try {
     const user = await User.findById(req.userId);
-    
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-
     res.status(200).json({
       message: "Profile retrieved successfully",
       user: user.toPublicJSON(),
     });
   } catch (error) {
     console.error("Get profile error:", error);
-    res.status(500).json({ 
-      message: "Server error",
-      error: error.message 
-    });
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 
@@ -184,7 +367,6 @@ router.get("/profile", authenticateToken, async (req, res) => {
 router.put("/profile", authenticateToken, async (req, res) => {
   try {
     const updates = req.body;
-    
     delete updates.email;
     delete updates.password;
     delete updates._id;
@@ -211,10 +393,7 @@ router.put("/profile", authenticateToken, async (req, res) => {
     });
   } catch (error) {
     console.error("Update profile error:", error);
-    res.status(500).json({ 
-      message: "Server error during update",
-      error: error.message 
-    });
+    res.status(500).json({ message: "Server error during update", error: error.message });
   }
 });
 
@@ -242,8 +421,6 @@ router.post("/upload-profile-image", authenticateToken, upload.single('profileIm
     user.profileImage = imageUrl;
     await user.save();
 
-    console.log('✅ Profile image uploaded:', imageUrl);
-
     res.status(200).json({
       message: "Profile image uploaded successfully",
       imageUrl: imageUrl,
@@ -251,10 +428,7 @@ router.post("/upload-profile-image", authenticateToken, upload.single('profileIm
     });
   } catch (error) {
     console.error("Upload image error:", error);
-    res.status(500).json({ 
-      message: "Failed to upload image",
-      error: error.message 
-    });
+    res.status(500).json({ message: "Failed to upload image", error: error.message });
   }
 });
 
@@ -262,14 +436,11 @@ router.post("/upload-profile-image", authenticateToken, upload.single('profileIm
 router.post("/save-push-token", authenticateToken, async (req, res) => {
   try {
     const { expoPushToken } = req.body;
-    
     if (!expoPushToken) {
       return res.status(400).json({ message: "Token required" });
     }
-
     await User.findByIdAndUpdate(req.userId, { expoPushToken });
     console.log(`✅ Push token saved for user: ${req.userId}`);
-    
     res.json({ success: true, message: "Push token saved successfully" });
   } catch (error) {
     console.error("Save push token error:", error);
@@ -277,7 +448,7 @@ router.post("/save-push-token", authenticateToken, async (req, res) => {
   }
 });
 
-// ===== ✅ UPDATE MANUAL VITALS (BP, Blood Sugar, Body Temp) =====
+// ===== UPDATE MANUAL VITALS =====
 router.put("/vitals", authenticateToken, async (req, res) => {
   try {
     const { bpSystolic, bpDiastolic, bloodSugar, temperature, recordedAt } = req.body;
@@ -286,22 +457,17 @@ router.put("/vitals", authenticateToken, async (req, res) => {
       return res.status(400).json({ message: "Please enter at least one vital" });
     }
 
-    // ✅ Temperature convert: agar Fahrenheit mein aaya (> 42) to Celsius mein convert karo
-    // Normal human temp: 37°C = 98.6°F
     let tempCelsius = null;
     if (temperature) {
       if (temperature > 42) {
-        // Fahrenheit hai — Celsius mein convert karo
         tempCelsius = parseFloat(((temperature - 32) * 5 / 9).toFixed(1));
         console.log(`🌡️ Temperature converted: ${temperature}°F → ${tempCelsius}°C`);
       } else {
-        // Already Celsius hai
         tempCelsius = parseFloat(temperature.toFixed(1));
         console.log(`🌡️ Temperature already Celsius: ${tempCelsius}°C`);
       }
     }
 
-    // ── Abnormal check (Celsius thresholds) ──
     let isAbnormal = false;
     if (bpSystolic  && (bpSystolic  > 140 || bpSystolic  < 90))  isAbnormal = true;
     if (bpDiastolic && (bpDiastolic > 90  || bpDiastolic < 60))  isAbnormal = true;
@@ -312,10 +478,9 @@ router.put("/vitals", authenticateToken, async (req, res) => {
 
     const now = new Date();
     const nextReminderAt = isAbnormal
-      ? new Date(now.getTime() + 1  * 60 * 60 * 1000)   // 1 hour
-      : new Date(now.getTime() + 24 * 60 * 60 * 1000);  // 24 hours
+      ? new Date(now.getTime() + 1  * 60 * 60 * 1000)
+      : new Date(now.getTime() + 24 * 60 * 60 * 1000);
 
-    // ── 1. User model mein vitals save karo (profile display ke liye) ──
     const user = await User.findByIdAndUpdate(
       req.userId,
       {
@@ -323,7 +488,7 @@ router.put("/vitals", authenticateToken, async (req, res) => {
           bpSystolic:    bpSystolic   || null,
           bpDiastolic:   bpDiastolic  || null,
           bloodSugar:    bloodSugar   || null,
-          temperature:   tempCelsius  || null,  // ✅ Celsius mein save
+          temperature:   tempCelsius  || null,
           recordedAt:    recordedAt   || now,
           vitalsStatus,
           nextReminderAt,
@@ -337,37 +502,26 @@ router.put("/vitals", authenticateToken, async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    console.log(`✅ Vitals saved in User | User: ${req.userId} | Status: ${vitalsStatus}`);
-
-    // ── 2. VitalReadings collection mein bhi save karo (dashboard ke liye) ──
     const latestReading = await VitalReading.findOne({ userId: req.userId }).sort({ timestamp: -1 });
 
     if (latestReading) {
-      // Existing reading update karo
       if (bpSystolic)  latestReading.systolicBP  = bpSystolic;
       if (bpDiastolic) latestReading.diastolicBP = bpDiastolic;
       if (bloodSugar)  latestReading.bloodSugar  = bloodSugar;
-      if (tempCelsius) latestReading.temperature = tempCelsius; // ✅ Celsius
+      if (tempCelsius) latestReading.temperature = tempCelsius;
       latestReading.timestamp = now;
-
       await latestReading.save();
-      console.log(`✅ VitalReading updated for dashboard sync | User: ${req.userId}`);
-
     } else {
-      // Koi reading nahi thi — NAYA record banao
       await VitalReading.create({
         userId:      req.userId,
         systolicBP:  bpSystolic  || null,
         diastolicBP: bpDiastolic || null,
         bloodSugar:  bloodSugar  || null,
-        temperature: tempCelsius || null, // ✅ Celsius
-        // heartRate aur bloodOxygen required hain schema mein
-        // default values dete hain taake create fail na ho
+        temperature: tempCelsius || null,
         heartRate:   latestReading?.heartRate   || 75,
         bloodOxygen: latestReading?.bloodOxygen || 98,
         timestamp:   now,
       });
-      console.log(`✅ New VitalReading created for dashboard sync | User: ${req.userId}`);
     }
 
     res.status(200).json({
@@ -401,13 +555,12 @@ router.get("/vitals-reminder", authenticateToken, async (req, res) => {
       nextReminderAt: nextReminder,
       vitals: user.vitals,
     });
-
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 
-// ===== FORGOT PASSWORD - Send Reset Code =====
+// ===== FORGOT PASSWORD =====
 router.post("/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
@@ -421,7 +574,7 @@ router.post("/forgot-password", async (req, res) => {
     }
 
     const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const resetCodeExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const resetCodeExpiry = new Date(Date.now() + 15 * 60 * 1000);
 
     user.resetCode = resetCode;
     user.resetCodeExpiry = resetCodeExpiry;

@@ -13,7 +13,7 @@ const Dashboard = () => {
     const loadProfile = async () => {
       try {
         const token = await AsyncStorage.getItem('userToken');
-        const response = await fetch('http://192.168.1.6:5000/api/auth/profile', {
+        const response = await fetch('http://192.168.1.7:5000/api/auth/profile', {
           headers: { Authorization: `Bearer ${token}` },
         });
         const data = await response.json();

@@ -30,5 +30,5 @@ const PORT = process.env.PORT || 5001;
 
 // '0.0.0.0' lagane se server local network par visible ho jata hai
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Guardian server running on http://192.168.1.6:${PORT}`);
+  console.log(`🚀 Guardian server running on http:/192.168.1.7:${PORT}`);
 });

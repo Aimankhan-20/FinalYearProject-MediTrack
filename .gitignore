@@ -1,4 +1,4 @@
 .env
 
-./guardians-module/Backend/node_modules/
+./guardians-module/Backend/node_modules\
 ./guardians-module/Frontend/node_modules/

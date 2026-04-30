@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { Linking } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   initialize,
@@ -9,62 +8,143 @@ import {
 } from 'react-native-health-connect';
 import { API_BASE_URL } from '../app/constants/constants';
 
-// ✅ Patient ki condition check karne ka function
 export const getPatientCondition = (heartRate, spo2) => {
   if (!heartRate && !spo2) return 'normal';
-
   const hr = heartRate || 75;
   const sp = spo2 || 98;
-
   if (hr > 150 || hr < 40 || sp < 90) return 'critical';
   if (hr > 120 || hr < 50 || sp < 94) return 'abnormal';
   return 'normal';
 };
 
-// ✅ Condition ke hisaab se interval (milliseconds)
 export const getIntervalByCondition = (condition) => {
   switch (condition) {
-    case 'critical': return 5 * 60 * 1000;
+    case 'critical': return 5  * 60 * 1000;
     case 'abnormal': return 15 * 60 * 1000;
     default:         return 60 * 60 * 1000;
   }
 };
 
-export const useWearData = () => {
-  const [heartRate, setHeartRate] = useState(null);
+// ✅ userId parameter accept karo — jab bhi naya user aaye, hook reset ho
+export const useWearData = (userId = null) => {
+  const [heartRate,         setHeartRate]         = useState(null);
   const [lastHeartRateTime, setLastHeartRateTime] = useState(null);
-  const [spo2, setSpo2] = useState(null);
-  const [steps, setSteps] = useState(null);
-  const [restingHeartRate, setRestingHeartRate] = useState(null);
-  const [bmi, setBmi] = useState(null);
-  const [accelerometer, setAccelerometer] = useState({
-    x: 0, y: 9.8, z: 0, intensity: 'Still',
-  });
-  const [lastSyncedTime, setLastSyncedTime] = useState(null);
-  // ✅ NEW
-  const [patientCondition, setPatientCondition] = useState('normal');
+  const [spo2,              setSpo2]              = useState(null);
+  const [steps,             setSteps]             = useState(null);
+  const [restingHeartRate,  setRestingHeartRate]  = useState(null);
+  const [bmi,               setBmi]               = useState(null);
+  const [accelerometer,     setAccelerometer]     = useState({ x: 0, y: 9.8, z: 0, intensity: 'Still' });
+  const [lastSyncedTime,    setLastSyncedTime]    = useState(null);
+  const [patientCondition,  setPatientCondition]  = useState('normal');
 
-  // ✅ refs for dynamic interval
-  const intervalRef = useRef(null);
-  const heartRateRef = useRef(null);
-  const spo2Ref = useRef(null);
+  const intervalRef    = useRef(null);
+  const heartRateRef   = useRef(null);
+  const spo2Ref        = useRef(null);
+  const currentUserRef = useRef(null);
 
-  // ✅ NEW: Backend pe data save karne ka function
-  // Ye function har interval ke baad fetchData ke andar call hoga
+  // ─── Token valid check ───────────────────────────────────────────────────
+  const isTokenValid = async () => {
+    const token = await AsyncStorage.getItem('userToken');
+    return !!token;
+  };
+
+  // ✅ Naya user check — signup ke baad 10 minute tak data save/show nahi hoga
+  const isNewUser = async () => {
+    try {
+      const signupTime = await AsyncStorage.getItem('signupTime');
+      if (!signupTime) return false;
+      const minutesSinceSignup = (Date.now() - parseInt(signupTime)) / 1000 / 60;
+      return minutesSinceSignup < 10;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // ─── Full state reset ────────────────────────────────────────────────────
+  const resetAllState = () => {
+    setHeartRate(null);
+    setLastHeartRateTime(null);
+    setSpo2(null);
+    setSteps(null);
+    setRestingHeartRate(null);
+    setBmi(null);
+    setAccelerometer({ x: 0, y: 9.8, z: 0, intensity: 'Still' });
+    setLastSyncedTime(null);
+    setPatientCondition('normal');
+    heartRateRef.current = null;
+    spo2Ref.current      = null;
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    console.log('🔄 useWearData: all state reset');
+  };
+
+  // ✅ userId dependency — jab bhi userId change ho (naya user login kare)
+  useEffect(() => {
+    if (!userId) {
+      console.log('⚠️ useWearData: userId nahi mila, fetch skip');
+      resetAllState();
+      return;
+    }
+
+    // Agar pehle koi aur user tha — uska data saaf karo
+    if (currentUserRef.current && currentUserRef.current !== userId) {
+      console.log('👤 User badal gaya! Purana data reset kar raha hun...');
+      resetAllState();
+    }
+
+    currentUserRef.current = userId;
+
+    const timer = setTimeout(async () => {
+      const token = await AsyncStorage.getItem('userToken');
+      if (!token) {
+        console.log('⚠️ Token nahi mila — fetch skip');
+        resetAllState();
+        return;
+      }
+
+      // ✅ Naya user hai toh fetch skip karo
+      const newUser = await isNewUser();
+      if (newUser) {
+        console.log('⏳ Naya user — 10 min baad data fetch hoga');
+        // 10 minute baad dobara try karo
+        setTimeout(async () => {
+          const stillNewUser = await isNewUser();
+          if (!stillNewUser) {
+            console.log('✅ 10 min complete — ab data fetch shuru');
+            initializeAndFetch();
+          }
+        }, 10 * 60 * 1000);
+        return;
+      }
+
+      initializeAndFetch();
+    }, 500);
+
+    return () => {
+      clearTimeout(timer);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [userId]);
+
+  // ─── Save to backend ─────────────────────────────────────────────────────
   const saveToBackend = async ({
-    heartRate,
-    bloodOxygen,
-    temperature,
-    footsteps,
-    restingHeartRate,
-    bmi,
-    accelerometer,
-    patientCondition,
+    heartRate, bloodOxygen, temperature,
+    footsteps, restingHeartRate, bmi,
+    accelerometer, patientCondition,
   }) => {
     try {
       const token = await AsyncStorage.getItem('userToken');
       if (!token) {
         console.log('⚠️ Token nahi mila, backend save skip');
+        return;
+      }
+
+      // ✅ Naya user check — 10 minute tak backend pe save nahi hoga
+      const newUser = await isNewUser();
+      if (newUser) {
+        console.log('⏳ Naya user — 10 min baad backend save hoga, abhi skip');
         return;
       }
 
@@ -85,11 +165,9 @@ export const useWearData = () => {
           patientCondition: patientCondition || 'normal',
         }),
       });
-
       const data = await response.json();
-
       if (response.ok) {
-        console.log(`✅ Backend save success | Condition: ${patientCondition} | HR: ${heartRate} | SpO2: ${bloodOxygen}`);
+        console.log(`✅ Backend save | Condition: ${patientCondition} | HR: ${heartRate} | SpO2: ${bloodOxygen}`);
       } else {
         console.log('⚠️ Backend save failed:', data.message);
       }
@@ -98,38 +176,41 @@ export const useWearData = () => {
     }
   };
 
-  // ✅ Adaptive interval setup
+  // ─── Adaptive interval ───────────────────────────────────────────────────
   const setupAdaptiveInterval = (hr, sp) => {
     const condition = getPatientCondition(hr, sp);
-    const interval = getIntervalByCondition(condition);
+    const interval  = getIntervalByCondition(condition);
     setPatientCondition(condition);
     if (intervalRef.current) clearInterval(intervalRef.current);
     console.log(`🔄 Condition: ${condition} | Next fetch: ${interval / 60000} min`);
-    intervalRef.current = setInterval(() => {
+    intervalRef.current = setInterval(async () => {
+      const valid = await isTokenValid();
+      if (!valid) {
+        resetAllState();
+        return;
+      }
+      const storedUserId = await AsyncStorage.getItem('userId');
+      if (currentUserRef.current && currentUserRef.current !== storedUserId) {
+        console.log('👤 Interval me user badal gaya! Rok raha hun...');
+        resetAllState();
+        return;
+      }
       fetchData();
     }, interval);
   };
 
-  useEffect(() => {
-    const timer = setTimeout(() => { initializeAndFetch(); }, 1000);
-    return () => {
-      clearTimeout(timer);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, []);
-
+  // ─── Last synced time update ─────────────────────────────────────────────
   const updateLastSynced = (recordTime) => {
     if (!recordTime) return;
     const newTime = new Date(recordTime);
     if (isNaN(newTime.getTime())) return;
     setLastSyncedTime(prev => {
-      if (!prev || newTime > new Date(prev)) {
-        return newTime;
-      }
+      if (!prev || newTime > new Date(prev)) return newTime;
       return prev;
     });
   };
 
+  // ─── BMI load ────────────────────────────────────────────────────────────
   const loadBMIFromProfile = async () => {
     try {
       const token = await AsyncStorage.getItem('userToken');
@@ -139,16 +220,15 @@ export const useWearData = () => {
       });
       const data = await response.json();
       if (data?.height && data?.weight) {
-        const heightStr = data.height.toString();
-        const parts = heightStr.split('.');
-        const feet = parseInt(parts[0]) || 0;
-        const inches = parseInt(parts[1]) || 0;
+        const heightStr   = data.height.toString();
+        const parts       = heightStr.split('.');
+        const feet        = parseInt(parts[0]) || 0;
+        const inches      = parseInt(parts[1]) || 0;
         const totalInches = feet * 12 + inches;
-        const heightMeters = totalInches * 0.0254;
-        const weightKg = parseFloat(data.weight);
-        if (heightMeters > 0 && weightKg > 0) {
-          const bmiValue = weightKg / (heightMeters * heightMeters);
-          setBmi(parseFloat(bmiValue.toFixed(1)));
+        const heightM     = totalInches * 0.0254;
+        const weightKg    = parseFloat(data.weight);
+        if (heightM > 0 && weightKg > 0) {
+          setBmi(parseFloat((weightKg / (heightM * heightM)).toFixed(1)));
         }
       } else if (data?.bmi) {
         setBmi(parseFloat(data.bmi));
@@ -158,13 +238,26 @@ export const useWearData = () => {
     }
   };
 
+  // ─── Initialize Health Connect ───────────────────────────────────────────
   const initializeAndFetch = async () => {
     try {
+      const valid = await isTokenValid();
+      if (!valid) {
+        console.log('⚠️ initializeAndFetch: no token, skip');
+        resetAllState();
+        return;
+      }
       await loadBMIFromProfile();
       const status = await getSdkStatus();
-      if (status !== SdkAvailabilityStatus.SDK_AVAILABLE) return;
+      if (status !== SdkAvailabilityStatus.SDK_AVAILABLE) {
+        console.log('❌ Health Connect not available');
+        return;
+      }
       const isInitialized = await initialize();
-      if (!isInitialized) return;
+      if (!isInitialized) {
+        console.log('❌ Health Connect initialize failed');
+        return;
+      }
       await fetchHeightWeight();
       await fetchData();
     } catch (error) {
@@ -174,58 +267,35 @@ export const useWearData = () => {
 
   const askPermissions = async () => {
     try {
-      await Linking.openURL('package:com.google.android.apps.healthdata');
+      const valid = await isTokenValid();
+      if (!valid) return;
+      await fetchData();
     } catch (e) {
-      try {
-        await Linking.openURL('https://play.google.com/store/apps/details?id=com.google.android.apps.healthdata');
-      } catch (err) {
-        console.log('Linking error:', err.message);
-      }
+      console.log('❌ error:', e.message);
     }
   };
 
+  // ─── Accelerometer helpers ───────────────────────────────────────────────
   const getAccelFromRate = (stepsPerMinute) => {
-    if (stepsPerMinute < 1) return { x: 0.0, y: 9.8, z: 0.0, intensity: 'Still' };
-    if (stepsPerMinute < 40) return {
-      x: parseFloat((stepsPerMinute * 0.04).toFixed(2)),
-      y: parseFloat((9.8 - stepsPerMinute * 0.01).toFixed(2)),
-      z: parseFloat((stepsPerMinute * 0.025).toFixed(2)),
-      intensity: 'Light',
-    };
-    if (stepsPerMinute < 80) return {
-      x: parseFloat((stepsPerMinute * 0.06).toFixed(2)),
-      y: parseFloat((9.8 - stepsPerMinute * 0.02).toFixed(2)),
-      z: parseFloat((stepsPerMinute * 0.04).toFixed(2)),
-      intensity: 'Moderate',
-    };
-    return {
-      x: parseFloat((stepsPerMinute * 0.09).toFixed(2)),
-      y: parseFloat((9.8 - stepsPerMinute * 0.035).toFixed(2)),
-      z: parseFloat((stepsPerMinute * 0.065).toFixed(2)),
-      intensity: 'Active',
-    };
+    if (stepsPerMinute < 1)  return { x: 0.0, y: 9.8, z: 0.0, intensity: 'Still' };
+    if (stepsPerMinute < 40) return { x: parseFloat((stepsPerMinute * 0.04).toFixed(2)),  y: parseFloat((9.8 - stepsPerMinute * 0.01).toFixed(2)),  z: parseFloat((stepsPerMinute * 0.025).toFixed(2)), intensity: 'Light'    };
+    if (stepsPerMinute < 80) return { x: parseFloat((stepsPerMinute * 0.06).toFixed(2)),  y: parseFloat((9.8 - stepsPerMinute * 0.02).toFixed(2)),  z: parseFloat((stepsPerMinute * 0.04).toFixed(2)),  intensity: 'Moderate' };
+    return                          { x: parseFloat((stepsPerMinute * 0.09).toFixed(2)),  y: parseFloat((9.8 - stepsPerMinute * 0.035).toFixed(2)), z: parseFloat((stepsPerMinute * 0.065).toFixed(2)), intensity: 'Active'   };
   };
 
   const calculateAccelerometerFromSteps = (stepsRecords) => {
     try {
       if (!stepsRecords || stepsRecords.length === 0)
         return { x: 0.0, y: 9.8, z: 0.0, intensity: 'Still' };
-
-      const now = new Date();
-      const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000);
-      const recentRecords = stepsRecords.filter((r) => {
-        const recordTime = new Date(r.endTime || r.startTime);
-        return recordTime >= tenMinutesAgo;
-      });
-
-      if (recentRecords.length > 0) {
-        let recentSteps = 0;
-        recentRecords.forEach((r) => (recentSteps += r.count || 0));
+      const now        = new Date();
+      const tenMinAgo  = new Date(now.getTime() - 10 * 60 * 1000);
+      const recentRecs = stepsRecords.filter(r => new Date(r.endTime || r.startTime) >= tenMinAgo);
+      if (recentRecs.length > 0) {
+        const recentSteps = recentRecs.reduce((s, r) => s + (r.count || 0), 0);
         return getAccelFromRate(recentSteps / 10);
       }
-
-      const totalSteps = stepsRecords.reduce((sum, r) => sum + (r.count || 0), 0);
-      const firstTime = new Date(stepsRecords[0].startTime || stepsRecords[0].endTime);
+      const totalSteps     = stepsRecords.reduce((s, r) => s + (r.count || 0), 0);
+      const firstTime      = new Date(stepsRecords[0].startTime || stepsRecords[0].endTime);
       const minutesElapsed = Math.max(1, (now - firstTime) / 1000 / 60);
       return getAccelFromRate(totalSteps / minutesElapsed);
     } catch (e) {
@@ -233,124 +303,125 @@ export const useWearData = () => {
     }
   };
 
+  // ─── Height/Weight fetch ─────────────────────────────────────────────────
   const fetchHeightWeight = async () => {
     try {
-      const now = new Date();
-      const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const valid = await isTokenValid();
+      if (!valid) return;
+      const now     = new Date();
+      const last30d = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
       const endTime = now.toISOString();
-
-      const heightData = await readRecords('Height', {
-        timeRangeFilter: { operator: 'between', startTime: last30Days, endTime },
-      });
-      const weightData = await readRecords('Weight', {
-        timeRangeFilter: { operator: 'between', startTime: last30Days, endTime },
-      });
-
+      const heightData = await readRecords('Height', { timeRangeFilter: { operator: 'between', startTime: last30d, endTime } });
+      const weightData = await readRecords('Weight', { timeRangeFilter: { operator: 'between', startTime: last30d, endTime } });
       if (heightData.records.length > 0 && weightData.records.length > 0) {
-        const h = heightData.records[heightData.records.length - 1];
-        const w = weightData.records[weightData.records.length - 1];
+        const h  = heightData.records[heightData.records.length - 1];
+        const w  = weightData.records[weightData.records.length - 1];
         const hm = h.height?.inMeters ?? h.value ?? null;
         const wk = w.weight?.inKilograms ?? w.value ?? null;
         if (hm && wk) setBmi(parseFloat((wk / (hm * hm)).toFixed(1)));
-
-        const weightTime = new Date(w.endTime ?? w.startTime ?? w.time);
-        updateLastSynced(weightTime);
+        updateLastSynced(new Date(w.endTime ?? w.startTime ?? w.time));
       }
     } catch (e) {
       console.log('Height/Weight HC error:', e.message);
     }
   };
 
+  // ─── Main fetch ──────────────────────────────────────────────────────────
   const fetchData = async () => {
     try {
-      const now = new Date();
+      const valid = await isTokenValid();
+      if (!valid) {
+        console.log('⚠️ fetchData: no token, resetting state');
+        resetAllState();
+        return;
+      }
+
+      // ✅ Naya user hai toh Health Connect data screen pe mat dikhao
+      const newUser = await isNewUser();
+      if (newUser) {
+        console.log('⏳ Naya user — Health Connect data skip, vitals -- rahenge');
+        return;
+      }
+
+      // User change check
+      const storedUserId = await AsyncStorage.getItem('userId');
+      if (currentUserRef.current && currentUserRef.current !== storedUserId) {
+        console.log('👤 fetchData: user badal gaya, reset...');
+        resetAllState();
+        return;
+      }
+
+      const now     = new Date();
       const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
       const endTime = now.toISOString();
 
-      let latestHR = heartRateRef.current;
-      let latestSpo2 = spo2Ref.current;
+      let latestHR    = heartRateRef.current;
+      let latestSpo2  = spo2Ref.current;
       let latestSteps = 0;
       let latestAccel = { x: 0, y: 9.8, z: 0, intensity: 'Still' };
 
-      // ── Heart Rate ──────────────────────────────────────────────────────────
+      // Heart Rate
       try {
-        const heartRateData = await readRecords('HeartRate', {
-          timeRangeFilter: { operator: 'between', startTime: last24h, endTime },
-        });
-
-        if (heartRateData.records.length > 0) {
-          const latest = heartRateData.records[heartRateData.records.length - 1];
-          const bpm = latest.samples?.[0]?.beatsPerMinute ?? latest.beatsPerMinute ?? null;
-          const recordTime = new Date(latest.endTime ?? latest.startTime ?? latest.time);
+        const hrData = await readRecords('HeartRate', { timeRangeFilter: { operator: 'between', startTime: last24h, endTime } });
+        if (hrData.records.length > 0) {
+          const latest = hrData.records[hrData.records.length - 1];
+          const bpm    = latest.samples?.[0]?.beatsPerMinute ?? latest.beatsPerMinute ?? null;
           if (bpm) {
             setHeartRate(bpm);
-            setLastHeartRateTime(recordTime);
-            updateLastSynced(recordTime);
+            setLastHeartRateTime(new Date(latest.endTime ?? latest.startTime ?? latest.time));
+            updateLastSynced(new Date(latest.endTime ?? latest.startTime ?? latest.time));
             latestHR = bpm;
             heartRateRef.current = bpm;
-            console.log('✅ HR:', bpm, '| Recorded at:', recordTime.toLocaleTimeString());
+            console.log('✅ HR:', bpm);
           }
-
           let minBPM = Infinity;
-          heartRateData.records.forEach((record) => {
-            const bpm = record.samples?.[0]?.beatsPerMinute ?? record.beatsPerMinute ?? null;
-            if (bpm && bpm > 40 && bpm < minBPM) minBPM = bpm;
+          hrData.records.forEach(r => {
+            const b = r.samples?.[0]?.beatsPerMinute ?? r.beatsPerMinute ?? null;
+            if (b && b > 40 && b < minBPM) minBPM = b;
           });
           if (minBPM !== Infinity) setRestingHeartRate(minBPM);
         }
       } catch (e) { console.log('HR error:', e.message); }
 
-      // ── SPO2 ────────────────────────────────────────────────────────────────
+      // SpO2
       try {
-        const spo2Data = await readRecords('OxygenSaturation', {
-          timeRangeFilter: { operator: 'between', startTime: last24h, endTime },
-        });
+        const spo2Data = await readRecords('OxygenSaturation', { timeRangeFilter: { operator: 'between', startTime: last24h, endTime } });
         if (spo2Data.records.length > 0) {
           const latest = spo2Data.records[spo2Data.records.length - 1];
-          const value = latest.percentage ?? latest.value ?? null;
-          const spo2Time = new Date(latest.endTime ?? latest.startTime ?? latest.time);
+          const value  = latest.percentage ?? latest.value ?? null;
           if (value !== null) {
             const spo2Val = value <= 1 ? Math.round(value * 100) : Math.round(value);
             setSpo2(spo2Val);
-            updateLastSynced(spo2Time);
+            updateLastSynced(new Date(latest.endTime ?? latest.startTime ?? latest.time));
             latestSpo2 = spo2Val;
             spo2Ref.current = spo2Val;
           }
         }
       } catch (e) { console.log('SPO2 error:', e.message); }
 
-      // ── Steps ───────────────────────────────────────────────────────────────
+      // Steps
       try {
         const midnightToday = new Date();
         midnightToday.setHours(0, 0, 0, 0);
         const stepsData = await readRecords('Steps', {
-          timeRangeFilter: {
-            operator: 'between',
-            startTime: midnightToday.toISOString(),
-            endTime: now.toISOString(),
-          },
+          timeRangeFilter: { operator: 'between', startTime: midnightToday.toISOString(), endTime: now.toISOString() },
         });
         if (stepsData.records.length > 0) {
-          let totalSteps = 0;
-          stepsData.records.forEach((r) => (totalSteps += r.count));
+          const totalSteps = stepsData.records.reduce((s, r) => s + r.count, 0);
           setSteps(totalSteps);
-          latestSteps = totalSteps; // ✅ NEW: backend ke liye store karo
+          latestSteps = totalSteps;
           const accel = calculateAccelerometerFromSteps(stepsData.records);
           setAccelerometer(accel);
-          latestAccel = accel; // ✅ NEW: backend ke liye store karo
-
-          const lastStepRecord = stepsData.records[stepsData.records.length - 1];
-          const stepTime = new Date(lastStepRecord.endTime ?? lastStepRecord.startTime);
-          updateLastSynced(stepTime);
+          latestAccel = accel;
+          updateLastSynced(new Date(stepsData.records[stepsData.records.length - 1].endTime ?? stepsData.records[stepsData.records.length - 1].startTime));
         }
       } catch (e) { console.log('Steps error:', e.message); }
 
-      // ✅ NEW: Backend pe save karo — sirf tab jab HR ya SpO2 available ho
       if (latestHR || latestSpo2) {
         await saveToBackend({
           heartRate:        latestHR,
           bloodOxygen:      latestSpo2,
-          temperature:      37.0,              // Health Connect se temperature nahi aata, default
+          temperature:      37.0,
           footsteps:        latestSteps,
           restingHeartRate: restingHeartRate,
           bmi:              bmi,
@@ -359,7 +430,6 @@ export const useWearData = () => {
         });
       }
 
-      // ✅ Fetch ke baad adaptive interval update karo
       setupAdaptiveInterval(latestHR, latestSpo2);
 
     } catch (error) {
@@ -376,7 +446,7 @@ export const useWearData = () => {
     restingHeartRate,
     bmi,
     accelerometer,
-    patientCondition,  // ✅
+    patientCondition,
     askPermissions,
   };
 };

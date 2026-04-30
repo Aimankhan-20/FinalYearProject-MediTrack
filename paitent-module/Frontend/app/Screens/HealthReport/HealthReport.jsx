@@ -42,8 +42,7 @@ import {
   Award,
   TrendingDown,
 } from "lucide-react-native";
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
+import { Share } from "react-native";
 import Footer from "../components/Footer";
 import { getProfile } from "../../services/api";
 import AsyncStorage from "@react-native-async-storage/async-storage";
